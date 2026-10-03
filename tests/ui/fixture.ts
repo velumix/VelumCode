@@ -65,7 +65,7 @@ export async function boot(page: Page, delay = 0, configure = true, waitForStart
         desktop: { notifications_enabled: true, last_error: null },
         pendingNavigation: null as string | null,
         updateStatus: {
-          revision: 0, supported: false, automatic: true, current_version: "0.7.1",
+          revision: 0, supported: false, automatic: true, current_version: "0.7.2",
           phase: "idle", version: null, downloaded: 0, total: null, checked_at: null, error: null,
           ...w.qaStartupStatus,
         },
