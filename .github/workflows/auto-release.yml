@@ -55,3 +55,12 @@ jobs:
           git tag "v$version"
           git push origin "v$version"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Dispatch release build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Tags pushed with GITHUB_TOKEN never trigger workflows (loop
+        # prevention), so start the release build explicitly. The tag tree
+        # already holds the matching version, notes and publish pipeline.
+        run: |
+          gh workflow run release.yml --ref "v${{ steps.bump.outputs.version }}" -f "tag=v${{ steps.bump.outputs.version }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
