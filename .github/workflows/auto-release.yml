@@ -27,6 +27,12 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Prepare pinned Rust toolchain
+        run: rustup toolchain install
+      - name: Fetch Rust dependencies
+        run: cargo fetch --locked --manifest-path src-tauri/Cargo.toml
       - name: Bump to next patch version
         id: bump
         run: node scripts/auto-bump.mjs
