@@ -1,0 +1,51 @@
+name: Auto-release on main
+# Every push to main ships a signed, published update: bump the patch
+# version, commit it, and push the release tag. The tag push then triggers
+# the Windows release workflow, which builds and publishes the installer.
+# The bump commit carries [skip ci] so this workflow does not loop.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-release-main
+  cancel-in-progress: true
+
+jobs:
+  bump-and-tag:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Bump to next patch version
+        id: bump
+        run: node scripts/auto-bump.mjs
+      - name: Verify legal and release consistency
+        run: |
+          node scripts/legal-notices.mjs --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/legal-check.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Commit bump and push release tag
+        run: |
+          git config user.name "velumix-release"
+          git config user.email "velumix-release@users.noreply.github.com"
+          $version = (node -e "console.log(require('./package.json').version)")
+          git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json PRIVACY.md TERMS.md THIRD_PARTY_NOTICES.txt legal/dependencies.json legal/publisher.json docs/releases/$version.md tests/ui/fixture.ts
+          git commit -m "[skip ci] chore: release Velum Code $version"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git push origin main
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git tag "v$version"
+          git push origin "v$version"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
