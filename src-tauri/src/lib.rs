@@ -95,6 +95,8 @@ pub fn run() {
             tool_bridge::agent_tools_disconnect,
             app_context::workspace_pick,
             app_context::workspace_check,
+            app_context::git_state,
+            app_context::git_file_diff,
             app_context::app_diagnostics,
             bots::bots_request,
             bots::bots_memory,

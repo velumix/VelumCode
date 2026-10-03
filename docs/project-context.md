@@ -25,6 +25,12 @@ Adding an attachment never sends the message. Existing drafts are preserved. Vie
 
 Memory remains a separate Markdown vault. Search and inspect saved notes in **Memory**. Recalled titles and their byte cost appear below the conversation; successful saves produce a notice. Proposing a note alone does not prove that it was saved. Bot-private memory is managed in the bot's own Memory screen and is not counted in the shared/project report.
 
+## Git branches and diff
+
+Open **Git** in the conversation toolbar (or `Ctrl+K` → Open Git branches and diff) to see the selected project's repository: current branch, local branches with upstream tracking, working-tree status, and per-file unified diffs. The branch picker switches the comparison base for the diff; the panel never checks out branches, stages, commits, or edits files — switch branches in a terminal. Refresh the panel after an agent turn to see what changed. The same read-only readers back the `git_branches` and `git_diff` agent tools: per-command `safe.directory`, 10 s timeout, 24 KB bounded output, no global configuration writes.
+
+The footer shows a live branch chip for the selected conversation (`branch · N changed`, ringed count only when the tree is dirty); it refreshes on tab switches and whenever a run settles, stays hidden outside a Git repository, and opens the Git panel on click. Each conversation pill in the sidebar names what is answering — model first, then bot or provider — followed by the live state: the current running detail (`Responding.`, `Running Shell.`), queue depth, or the settled state. Terminal tabs keep the provider name with terminal state.
+
 ## Antigravity command permissions
 
 Antigravity can return a successful process exit even when a tool was denied because headless mode could not ask for permission. Velum marks these turns **blocked**, preserves partial output, skips memory proposals and board actions, and immediately pauses scheduled work. Background notifications also report blocked turns.

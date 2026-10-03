@@ -121,7 +121,7 @@ kbd { font: inherit; }
 .tab.active .conversation-icon { color: var(--accent); }
 .tab-copy { display: flex; flex-direction: column; gap: 5px; min-width: 0; flex: 1; }
 .tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(12px * var(--ui-scale)); font-weight: 500; }
-.tab-detail { color: var(--subtle); font-size: calc(11px * var(--ui-scale)); white-space: nowrap; }
+.tab-detail { color: var(--subtle); font-size: calc(11px * var(--ui-scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tab.active .tab-detail { color: var(--muted); }
 .tab-close { width: 20px; height: 22px; flex-shrink: 0; display: grid; place-items: center; border-radius: 5px; color: var(--muted); opacity: 0; }
 .tab:hover .tab-close, .tab:focus-visible .tab-close { opacity: 1; }
@@ -161,6 +161,10 @@ kbd { font: inherit; }
 .footer-hint { display: flex; align-items: center; gap: 6px; flex-shrink: 0; color: var(--subtle); font-size: calc(11px * var(--ui-scale)); }
 .notification-toggle { display: flex; align-items: center; gap: 5px; flex-shrink: 0; padding: 3px 6px; border: 0; border-radius: 5px; color: var(--text); background: transparent; font-size: calc(11px * var(--ui-scale)); }
 .notification-toggle:hover { background: var(--accent-dim); }
+.git-chip { display: flex; align-items: center; gap: 5px; flex-shrink: 0; max-width: 240px; padding: 3px 6px; border: 0; border-radius: 5px; color: var(--muted); background: transparent; font-size: calc(11px * var(--ui-scale)); cursor: pointer; }
+.git-chip:hover { background: var(--accent-dim); color: var(--text); }
+.git-chip-branch { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.git-chip-count { min-width: 16px; text-align: center; padding: 0 4px; border-radius: 8px; background: var(--accent-dim); color: var(--text); font-size: calc(10px * var(--ui-scale)); }
 .notification-toggle[aria-pressed="false"] { color: var(--subtle); }
 .desktop-notice { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 22px; background: var(--accent-dim); border-bottom: 1px solid var(--accent-border); color: var(--text); font-size: calc(12px * var(--ui-scale)); }
 .desktop-notice.error { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }

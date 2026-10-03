@@ -141,22 +141,29 @@ pub fn repository_root(path: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-pub fn git_status(root: &Path) -> Result<Value, String> {
-    let repository = repository_root(root).ok_or("No Git repository detected.")?;
+fn run_git(
+    operation: &str,
+    repository: &Path,
+    args: &[&str],
+    paths: &[PathBuf],
+    cap: usize,
+) -> Result<(String, bool), String> {
+    // Read-only Git inspection. safe.directory applies to this repository for
+    // this command only; global configuration, ownership, commits and files
+    // are never changed.
     let mut cmd = std::process::Command::new("git");
     cmd.arg("-c")
         .arg(format!("safe.directory={}", repository.display()))
         .args(["-c", "core.fsmonitor=false"])
-        .args([
-            "--no-optional-locks",
-            "status",
-            "--short",
-            "--branch",
-            "--untracked-files=normal",
-            "--",
-        ])
-        .arg(root)
-        .current_dir(&repository)
+        .arg("--no-optional-locks")
+        .args(args);
+    if !paths.is_empty() {
+        cmd.arg("--");
+        for path in paths {
+            cmd.arg(path);
+        }
+    }
+    cmd.current_dir(repository)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -170,7 +177,7 @@ pub fn git_status(root: &Path) -> Result<Value, String> {
         .map_err(|_| "Git is unavailable on the host PATH.".to_string())?;
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
-    let out = std::thread::spawn(move || read_bounded(stdout, 24000));
+    let out = std::thread::spawn(move || read_bounded(stdout, cap));
     let err = std::thread::spawn(move || read_bounded(stderr, 0));
     let started = std::time::Instant::now();
     let status = loop {
@@ -190,25 +197,159 @@ pub fn git_status(root: &Path) -> Result<Value, String> {
         }
         std::thread::sleep(std::time::Duration::from_millis(25));
     };
-    let output = out.join().map_err(|_| "Cannot collect Git status.")??;
+    let output = out
+        .join()
+        .map_err(|_| format!("Cannot collect Git {operation}."))??;
     let _ = err.join();
-    let status = status.ok_or(
-        "Git status timed out or could not be monitored; no Git configuration was changed.",
-    )?;
+    let status = status.ok_or(format!(
+        "Git {operation} timed out or could not be monitored; no Git configuration was changed."
+    ))?;
     if !status.success() {
         return Err(format!(
-            "Git status failed (exit {:?}); no Git configuration was changed.",
+            "Git {operation} failed (exit {:?}); no Git configuration was changed.",
             status.code()
         ));
     }
     let text = String::from_utf8_lossy(&output.0);
-    let mut end = text.len().min(24000);
+    let mut end = text.len().min(cap);
     while !text.is_char_boundary(end) {
         end -= 1;
     }
+    Ok((text[..end].to_string(), output.1 || end < text.len()))
+}
+
+pub fn git_status(root: &Path) -> Result<Value, String> {
+    let repository = repository_root(root).ok_or("No Git repository detected.")?;
+    let (status, truncated) = run_git(
+        "status",
+        &repository,
+        &["status", "--short", "--branch", "--untracked-files=normal"],
+        &[root.to_path_buf()],
+        24000,
+    )?;
     Ok(
-        json!({"status":&text[..end],"truncated":output.1||end<text.len(),"trust":"Selected repository only, for this command.","global_config_changed":false}),
+        json!({"status":status,"truncated":truncated,"trust":"Selected repository only, for this command.","global_config_changed":false}),
     )
+}
+
+pub fn git_branches(root: &Path) -> Result<Value, String> {
+    let repository = repository_root(root).ok_or("No Git repository detected.")?;
+    let (current, _) = run_git("branch", &repository, &["branch", "--show-current"], &[], 4096)?;
+    let (locals, truncated) = run_git(
+        "branch",
+        &repository,
+        &["branch", "--format=%(refname:short)|%(upstream:short)|%(objectname:short)"],
+        &[],
+        24000,
+    )?;
+    let branches: Vec<Value> = locals
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(3, '|');
+            let name = parts.next().unwrap_or("");
+            if name.is_empty() {
+                return None;
+            }
+            Some(json!({
+                "name": name,
+                "upstream": parts.next().unwrap_or(""),
+                "head": parts.next().unwrap_or(""),
+            }))
+        })
+        .collect();
+    Ok(json!({
+        "root": repository.display().to_string(),
+        "current": current.trim(),
+        "branches": branches,
+        "truncated": truncated,
+        "trust": "Selected repository only, for this command.",
+        "global_config_changed": false,
+    }))
+}
+
+fn check_revision(base: &str) -> Result<&str, String> {
+    if base.is_empty() {
+        return Ok("HEAD");
+    }
+    let safe = !base.starts_with('-')
+        && base
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '/' | '.' | '_' | '-'));
+    if !safe {
+        return Err("Unknown or unsafe Git revision.".into());
+    }
+    Ok(base)
+}
+
+fn check_diff_path(relative: &str) -> Result<PathBuf, String> {
+    // Syntactic checks only: deleted files no longer exist, so resolve()
+    // (which requires filesystem access) cannot validate them. The path is
+    // passed to Git after `--`, so it is never interpreted as an option.
+    let path = Path::new(relative);
+    if relative.is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
+    {
+        return Err(
+            "Use a relative path inside the selected project; parent traversal is unavailable."
+                .into(),
+        );
+    }
+    for component in path.components() {
+        if let Component::Normal(name) = component {
+            let name_text = name.to_string_lossy();
+            if name_text.eq_ignore_ascii_case(".git")
+                || name_text.contains(':')
+                || name_text.ends_with(['.', ' '])
+            {
+                return Err(
+                    "Git metadata, alternate streams and ambiguous Windows paths are unavailable."
+                        .into(),
+                );
+            }
+        }
+    }
+    Ok(path.to_path_buf())
+}
+
+pub fn git_diff(root: &Path, base: &str, relative: Option<&str>) -> Result<Value, String> {
+    let repository = repository_root(root).ok_or("No Git repository detected.")?;
+    let base = check_revision(base)?;
+    let mut paths = vec![root.to_path_buf()];
+    if let Some(relative) = relative {
+        if !relative.is_empty() {
+            paths.push(check_diff_path(relative)?);
+        }
+    }
+    // Without a file path this returns `--stat` for the overview; with one it
+    // returns the unified diff of that file. `path` is repository-relative.
+    let (text, truncated) = if relative.is_some_and(|r| !r.is_empty()) {
+        run_git(
+            "diff",
+            &repository,
+            &["diff", "--no-color", "--no-ext-diff", "-U3", base],
+            &paths,
+            24000,
+        )?
+    } else {
+        run_git(
+            "diff",
+            &repository,
+            &["diff", "--no-color", "--stat=200,200", base],
+            &paths,
+            24000,
+        )?
+    };
+    Ok(json!({
+        "base": base,
+        "path": relative.unwrap_or(""),
+        "diff": text,
+        "truncated": truncated,
+        "trust": "Selected repository only, for this command.",
+        "global_config_changed": false,
+    }))
 }
 
 // Drain both pipes even after the retained output is full, so a large tree
@@ -461,6 +602,96 @@ mod tests {
         assert_eq!(output.len(), 24000);
         assert!(truncated);
         assert_eq!(input.position(), 64000);
+    }
+    fn git_available() -> bool {
+        std::process::Command::new("git")
+            .arg("--version")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+    fn git(repo: &Path, args: &[&str]) {
+        // Per-command identity: never touch the developer's global Git config.
+        let status = std::process::Command::new("git")
+            .args(["-c", "user.email=velum-test@example.com", "-c", "user.name=Velum Test", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(repo)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("git must run");
+        assert!(status.success(), "git {args:?} failed");
+    }
+    fn git_repo() -> Option<Fixture> {
+        if !git_available() {
+            return None;
+        }
+        let fixture = Fixture::new();
+        git(&fixture.0, &["init", "-b", "main"]);
+        fs::write(fixture.0.join("note.txt"), "first\n").unwrap();
+        git(&fixture.0, &["add", "note.txt"]);
+        git(&fixture.0, &["commit", "-m", "initial"]);
+        Some(fixture)
+    }
+    #[test]
+    fn git_reports_branches_status_and_diff() {
+        let Some(repo) = git_repo() else {
+            return;
+        };
+        git(&repo.0, &["checkout", "-b", "feature/work"]);
+        fs::write(repo.0.join("note.txt"), "first\nsecond\n").unwrap();
+        let branches = git_branches(&repo.0).unwrap();
+        assert_eq!(branches["current"], "feature/work");
+        let names: Vec<&str> = branches["branches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"main"));
+        assert!(names.contains(&"feature/work"));
+        let status = git_status(&repo.0).unwrap()["status"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(status.contains("## feature/work"), "{status}");
+        assert!(status.contains("note.txt"), "{status}");
+        let stat = git_diff(&repo.0, "", None).unwrap();
+        assert_eq!(stat["base"], "HEAD");
+        assert!(stat["diff"].as_str().unwrap().contains("note.txt"));
+        let file = git_diff(&repo.0, "", Some("note.txt")).unwrap();
+        let diff = file["diff"].as_str().unwrap().to_owned();
+        assert!(diff.contains("+second"), "{diff}");
+        assert!(!file["truncated"].as_bool().unwrap());
+    }
+    #[test]
+    fn git_outside_a_repository_reports_no_repo() {
+        let fixture = Fixture::new();
+        for result in [
+            git_branches(&fixture.0),
+            git_status(&fixture.0),
+            git_diff(&fixture.0, "", None),
+        ] {
+            assert_eq!(
+                result.unwrap_err(),
+                "No Git repository detected."
+            );
+        }
+    }
+    #[test]
+    fn git_diff_rejects_traversal_metadata_and_option_like_revisions() {
+        let Some(repo) = git_repo() else {
+            return;
+        };
+        for bad in ["../outside", "C:\\outside", ".git/config", "note.txt:secret", "sub/../.."] {
+            assert!(git_diff(&repo.0, "", Some(bad)).is_err(), "{bad}");
+        }
+        for bad in ["-h", "--help", "HEAD;rm", "a b"] {
+            assert!(git_diff(&repo.0, bad, None).is_err(), "{bad}");
+        }
     }
     #[test]
     fn incomplete_hash_reports_the_actual_argument_length_without_removal() {

@@ -187,6 +187,40 @@ export async function boot(page: Page, delay = 0, configure = true, waitForStart
             if(q.action==='stop'){job.status='cancelled';job.paused=true;}
             return structuredClone(api.jobs);
           }
+          if (cmd === "git_state") {
+            return {
+              root: "C:\\Projects\\VelumCode",
+              current: "main",
+              branches: [
+                { name: "main", upstream: "origin/main", head: "a232474" },
+                { name: "improve/ui-customization", upstream: "", head: "b1af248" },
+              ],
+              branches_truncated: false,
+              status: "## main...origin/main\n M src/App.tsx\n?? src/components/GitPanel.tsx",
+              status_truncated: false,
+              trust: "Selected repository only, for this command.",
+              global_config_changed: false,
+            };
+          }
+          if (cmd === "git_file_diff") {
+            if (args.path)
+              return {
+                base: args.base || "HEAD",
+                path: args.path,
+                diff: `diff --git a/${args.path} b/${args.path}\n--- a/${args.path}\n+++ b/${args.path}\n@@ -1 +1 @@\n-old\n+new`,
+                truncated: false,
+                trust: "Selected repository only, for this command.",
+                global_config_changed: false,
+              };
+            return {
+              base: args.base || "HEAD",
+              path: "",
+              diff: " src/App.tsx | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)",
+              truncated: false,
+              trust: "Selected repository only, for this command.",
+              global_config_changed: false,
+            };
+          }
           if (cmd === "kanban_request") {
             const key = `qa-board:${args.workspace}`;
             const board = JSON.parse(localStorage.getItem(key) || '{"revision":0,"cards":[]}');

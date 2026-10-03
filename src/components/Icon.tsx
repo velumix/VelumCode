@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 import velumMark from "../assets/velum-mark.png";
 
-export type IconName = "board" | "search" | "plus" | "chat" | "folder" | "code" | "terminal" | "arrow" | "down" | "reset" | "command" | "check" | "copy" | "close" | "shield" | "bell" | "phone" | "memory" | "settings" | "edit";
+export type IconName = "board" | "search" | "plus" | "chat" | "folder" | "code" | "branch" | "terminal" | "arrow" | "down" | "reset" | "command" | "check" | "copy" | "close" | "shield" | "bell" | "phone" | "memory" | "settings" | "edit";
 
 const paths: Record<IconName, string> = {
   edit: "m16 3 5 5L9 20l-6 1 1-6L16 3Zm-2 2 5 5",
@@ -14,6 +14,7 @@ const paths: Record<IconName, string> = {
   chat: "M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z",
   folder: "M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Zm0 2h18",
   code: "m8 7-5 5 5 5m8-10 5 5-5 5m-3-13-2 16",
+  branch: "M6 3v12M18 9a9 9 0 0 1-9 9M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6ZM18 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z",
   terminal: "m5 7 5 5-5 5m8 0h6",
   arrow: "M5 12h14m-5-5 5 5-5 5",
   down: "M12 4v16m-6-6 6 6 6-6",

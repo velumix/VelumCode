@@ -9,6 +9,7 @@ import SearchBar from "./components/SearchBar";
 const TerminalView = lazy(() => import("./components/TerminalView"));
 import type { PtyStatus, TerminalHandles } from "./components/TerminalView";
 import ChatView from "./components/ChatView";
+import GitChip from "./components/GitChip";
 import type { AgentStatus } from "./components/ChatView";
 import CommandPalette from "./components/CommandPalette";
 const RemotePanel = lazy(() => import("./components/RemotePanel"));
@@ -25,6 +26,7 @@ const BotsPanel=lazy(()=>import('./components/BotsPanel'));
 const MemoryPanel = lazy(() => import("./components/MemoryPanel"));
 const PluginPanel = lazy(() => import("./components/PluginPanel"));
 const KanbanPanel = lazy(() => import("./components/KanbanPanel"));
+const GitPanel = lazy(() => import("./components/GitPanel"));
 import { taskPrompt, type Board, type Card } from "./kanban";
 import type { PluginSelection } from "./components/PluginPanel";
 import type { InstalledPlugin, PluginChatHandle } from "./plugins";
@@ -111,6 +113,7 @@ export default function App() {
   const [memory, setMemory] = useState<{workspace:string;seed?:string;bot_id?:string;initialFilter?:'active'|'pending'}|null>(null);
   const [guidanceReviewCount, setGuidanceReviewCount] = useState(0);
   const [boardWorkspace, setBoardWorkspace] = useState<string | null>(null);
+  const [gitWorkspace, setGitWorkspace] = useState<string | null>(null);
   const [desktop, setDesktop] = useState<DesktopStatus>({ notifications_enabled: true, last_error: null });
   const [desktopMessage, setDesktopMessage] = useState<{ text: string; error: boolean } | null>(() => recoveryError ? { text: recoveryError, error: true } : null);
   useEffect(() => {
@@ -466,6 +469,7 @@ export default function App() {
     { id: "cmd-settings", title: "Open settings: themes, glass, layout, and preferences", hint: "Ctrl+,", run: () => setSettingsOpen(true) },
     {id:'cmd-bots',title:'Open bots and schedules',run:()=>setBotPanel('manage')},
     { id: "cmd-kanban", title: "Open workspace Kanban board", run: () => { if(activeTab?.workspace)setBoardWorkspace(activeTab.workspace); } },
+    { id: "cmd-git", title: "Open Git branches and diff", run: () => { if(activeTab?.workspace)setGitWorkspace(activeTab.workspace); } },
     { id: "cmd-plugins", title: "Manage plugins", run: () => setPluginPanel({}) },
     ...plugins.filter(p => p.enabled).flatMap(p => p.manifest.commands.map(c => ({ id: `plugin-${p.manifest.id}-${c.id}`, title: `${c.title} · ${p.manifest.name}`, run: () => setPluginPanel({ selection: { id: p.manifest.id, command: c.id } }) }))),
     { id:"cmd-memory", title:"Open project memory vault", run:()=>{ if(activeTab?.workspace)setMemory({workspace:activeTab.workspace}); } },
@@ -517,7 +521,7 @@ export default function App() {
         <button type="button" aria-label="Dismiss notification message" onClick={() => { setDesktopMessage(null); setDesktop((s) => ({ ...s, last_error: null })); }}><Icon name="close" size={15} /></button>
       </div>}
       <div className="app-body">
-      <TabBar tabs={tabs.map((t) => ({ ...t, bot:bots.find(b=>b.id===t.bot_id),status: tabStatus(t) }))} activeId={activeTab?.id ?? ""} onSelect={selectTab} onClose={closeTab} onNew={newTab} onCommands={togglePalette} onSettings={() => setSettingsOpen(true)} onBots={()=>setBotPanel('manage')} onPlugins={() => setPluginPanel({})} onKanban={()=>{if(activeTab?.workspace)setBoardWorkspace(activeTab.workspace);}} workspace={activeTab?.workspace} />
+      <TabBar tabs={tabs.map((t) => ({ ...t, bot:bots.find(b=>b.id===t.bot_id),model:t.options.model,mode:t.mode,status: tabStatus(t) }))} activeId={activeTab?.id ?? ""} onSelect={selectTab} onClose={closeTab} onNew={newTab} onCommands={togglePalette} onSettings={() => setSettingsOpen(true)} onBots={()=>setBotPanel('manage')} onPlugins={() => setPluginPanel({})} onKanban={()=>{if(activeTab?.workspace)setBoardWorkspace(activeTab.workspace);}} workspace={activeTab?.workspace} />
       <main className="conversation-pane" aria-label="Current conversation">
       <div className="conversation-toolbar">
         <div className="conversation-heading">
@@ -536,6 +540,7 @@ export default function App() {
         )}
         {activeTab?.mode === "terminal" && <button type="button" className="status-btn" onClick={clearActive}>Clear</button>}
         <button type="button" aria-label="Memory" title={guidanceReviewCount ? `${guidanceReviewCount} suggestions to review` : "Project guidance and saved notes"} className="status-btn" disabled={!activeTab?.workspace} onClick={()=>{if(activeTab?.workspace)setMemory({workspace:activeTab.workspace,bot_id:activeTab.bot_id,initialFilter:guidanceReviewCount?'pending':'active'});}}><Icon name="memory" size={17}/><span>Memory</span>{guidanceReviewCount>0&&<span className="guidance-review-count" aria-label={`${guidanceReviewCount} suggestions to review`}>{guidanceReviewCount}</span>}</button>
+        <button type="button" aria-label="Git branches and diff" title="Branches, working-tree status and diffs (read-only)" className="status-btn" disabled={!activeTab?.workspace} onClick={()=>{if(activeTab?.workspace)setGitWorkspace(activeTab.workspace);}}><Icon name="code" size={17}/><span>Git</span></button>
         <button type="button" className={`restart-btn${failed ? " primary" : ""}`} onClick={restartActive} aria-label="Restart" title="Restart this session">
           <Icon name="reset" size={17} />
         </button>
@@ -591,6 +596,7 @@ export default function App() {
             <span className="status-text" title={statusText(activeTab)}>
               {statusText(activeTab)}
             </span>
+            {activeTab.workspace && <GitChip workspace={activeTab.workspace} signal={`${activeTab.id}:${tabStatus(activeTab).kind}`} onOpen={() => { if (activeTab.workspace) setGitWorkspace(activeTab.workspace); }} />}
           </>
         )}
         <span className="status-spacer" />
@@ -605,6 +611,7 @@ export default function App() {
       {settingsOpen && <Suspense fallback={null}><SettingsPanel initialPage={settingsPage} updates={updates} onClose={() => { setSettingsOpen(false); setSettingsPage("appearance"); }} notifications={{ enabled: desktop.notifications_enabled, toggle: toggleNotifications, test: testNotification }} /></Suspense>}
       {remoteOpen && <Suspense fallback={null}><RemotePanel onClose={() => setRemoteOpen(false)} /></Suspense>}
       {boardWorkspace && <Suspense fallback={null}><KanbanPanel workspace={boardWorkspace} bots={bots} previewSchedule={(cron,timezone)=>invoke('automation_request',{request:{action:'preview',cron,timezone}})} request={request=>invoke<Board>("kanban_request",{workspace:boardWorkspace,request})} onClose={()=>setBoardWorkspace(null)} onWork={workOnCard}/></Suspense>}
+      {gitWorkspace && <Suspense fallback={null}><GitPanel workspace={gitWorkspace} onClose={()=>setGitWorkspace(null)} /></Suspense>}
       {pluginPanel && <Suspense fallback={null}><PluginPanel plugins={plugins} selection={pluginPanel.selection} onClose={() => setPluginPanel(null)} onRefresh={refreshPlugins} workspace={activeTab?.workspace || ""} messages={() => pluginHandles.current.get(activeTab?.id)?.messages() || []} onInsert={text => { pluginHandles.current.get(activeTab?.id)?.insert(text); focusComposer(); }} /></Suspense>}
       {memory&&<Suspense fallback={null}><MemoryPanel initialFilter={memory.initialFilter} ownerName={bots.find(b=>b.id===memory.bot_id)?.name} seed={memory.seed} onClose={()=>setMemory(null)} request={(request)=>invoke<MemoryView>(memory.bot_id?'bots_memory':'memory_request',{workspace:memory.workspace,request,id:memory.bot_id})} openVault={()=>memory.bot_id?invoke('bots_open',{id:memory.bot_id,memory:true}):invoke("memory_open")}/></Suspense>}
       {botPanel&&<Suspense fallback={null}><BotsPanel initialPage={botPanel==='activity'?'activity':'profiles'} openMemory={id=>invoke('bots_open',{id,memory:true})} workspace={activeTab?.workspace||''} provider={activeTab?.provider||'muse'} options={activeTab?.options||{model:'',reasoning:''}} request={request=>invoke<BotView>('bots_request',{request})} automation={request=>invoke('automation_request',{request})} memory={(id,request)=>invoke<MemoryView>('bots_memory',{id,workspace:activeTab?.workspace||'',request})} loadModels={(provider,refresh)=>invoke<ModelCatalog>('provider_models',{provider,refresh})} openFolder={id=>invoke('bots_open',{id})} onClose={()=>setBotPanel(null)} chatLabel={botPanel==='handoff'?'Hand off':'Chat'} onChat={openBot} onChange={()=>void refreshBots()}/></Suspense>}

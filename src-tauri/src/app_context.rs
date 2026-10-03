@@ -38,6 +38,45 @@ fn probe(path: &Path, write: bool) -> Access {
 }
 
 #[tauri::command]
+pub async fn git_state(workspace: String) -> Result<Value, String> {
+    // One read-only call for the Git panel: branch list plus working-tree
+    // status. Never changes configuration, branches, commits or files.
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = Path::new(&workspace);
+        let branches = crate::workspace_tools::git_branches(root)?;
+        let status = crate::workspace_tools::git_status(root)?;
+        Ok(json!({
+            "root": branches["root"],
+            "current": branches["current"],
+            "branches": branches["branches"],
+            "branches_truncated": branches["truncated"],
+            "status": status["status"],
+            "status_truncated": status["truncated"],
+            "trust": "Selected repository only, for this command.",
+            "global_config_changed": false,
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn git_file_diff(
+    workspace: String,
+    base: String,
+    path: String,
+) -> Result<Value, String> {
+    // Unified diff of one repository-relative file against `base`
+    // (empty means HEAD). Read-only; see workspace_tools::git_diff.
+    tauri::async_runtime::spawn_blocking(move || {
+        let relative = if path.is_empty() { None } else { Some(path.as_str()) };
+        crate::workspace_tools::git_diff(Path::new(&workspace), &base, relative)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn workspace_check(
     app: tauri::AppHandle,
     workspace: String,

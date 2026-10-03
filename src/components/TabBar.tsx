@@ -8,6 +8,8 @@ import BotAvatar from './BotAvatar';
 export interface TabInfo {
   bot?: BotIdentity;
   provider: Provider;
+  model: string;
+  mode: "agent" | "terminal";
   id: string;
   title: string;
   status: PtyStatus | AgentStatus;
@@ -40,6 +42,24 @@ function sessionDetail(status: PtyStatus | AgentStatus): string {
   return "Ready when you are";
 }
 
+// Second line of a conversation pill: who is answering (model first, then
+// bot or provider) plus the live state — running detail, queue depth, or the
+// settled state. Terminal tabs keep the provider name with terminal state.
+function pillDetail(t: TabInfo): string {
+  if (t.mode === "terminal" || "backend" in t.status) return `${providerNames[t.provider]} · ${sessionDetail(t.status)}`;
+  const who = t.model || t.bot?.name || providerNames[t.provider];
+  const s = t.status;
+  if (s.kind === "running" && !("backend" in s)) {
+    const live = s.detail ? s.detail : "Working on it…";
+    const queued = s.queued ? ` · ${s.queued} queued` : "";
+    return `${who} · ${live}${queued}`;
+  }
+  const queued = "queued" in s ? (s.queued ?? 0) : 0;
+  const paused = "queuePaused" in s ? s.queuePaused : false;
+  if (queued > 0) return `${who} · ${paused ? "Queue paused" : "Queued"} (${queued})`;
+  return `${who} · ${sessionDetail(s)}`;
+}
+
 export default function TabBar({ tabs, activeId, onSelect, onClose, onNew, onCommands, onSettings, onPlugins, onKanban, onBots, workspace }: TabBarProps) {
   const project = workspace?.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "Your workspace";
   return (
@@ -60,7 +80,7 @@ export default function TabBar({ tabs, activeId, onSelect, onClose, onNew, onCom
           role="tab"
           data-session-id={t.id}
           aria-selected={t.id === activeId}
-          aria-label={`${conversationTitle(t.title)}, ${sessionDetail(t.status)}`}
+          aria-label={`${conversationTitle(t.title)}, ${pillDetail(t)}`}
           tabIndex={t.id === activeId ? 0 : -1}
           aria-keyshortcuts="Delete"
           title={`${conversationTitle(t.title)} (Delete to close)`}
@@ -82,7 +102,7 @@ export default function TabBar({ tabs, activeId, onSelect, onClose, onNew, onCom
           }}
         >
           <span className="conversation-icon">{t.bot?<BotAvatar bot={t.bot} size={32}/>:<Icon name="chat" size={19}/>}</span>
-          <span className="tab-copy"><span className="tab-title">{conversationTitle(t.title)}</span><span className="tab-detail">{t.bot?.name||providerNames[t.provider]} · {sessionDetail(t.status)}</span></span>
+          <span className="tab-copy"><span className="tab-title">{conversationTitle(t.title)}</span><span className="tab-detail">{pillDetail(t)}</span></span>
           {t.status.kind === "running" && <span className="status-dot running" aria-hidden="true" />}
           <span
             className="tab-close"
