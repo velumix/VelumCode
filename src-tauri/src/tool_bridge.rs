@@ -296,7 +296,8 @@ fn allowed(scope: &Scope, current: &Permissions, name: &str) -> bool {
         "native_input" => {
             cfg!(windows) && scope.permissions.native_control && current.native_control
         }
-        "inspect_file" | "workspace_search" | "git_status" | "git_branches" | "git_diff" | "turn_diagnostics" => true,
+        "inspect_file" | "workspace_search" | "git_status" | "git_branches" | "git_diff"
+        | "turn_diagnostics" => true,
         _ => false,
     }
 }

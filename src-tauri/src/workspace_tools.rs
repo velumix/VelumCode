@@ -234,11 +234,20 @@ pub fn git_status(root: &Path) -> Result<Value, String> {
 
 pub fn git_branches(root: &Path) -> Result<Value, String> {
     let repository = repository_root(root).ok_or("No Git repository detected.")?;
-    let (current, _) = run_git("branch", &repository, &["branch", "--show-current"], &[], 4096)?;
+    let (current, _) = run_git(
+        "branch",
+        &repository,
+        &["branch", "--show-current"],
+        &[],
+        4096,
+    )?;
     let (locals, truncated) = run_git(
         "branch",
         &repository,
-        &["branch", "--format=%(refname:short)|%(upstream:short)|%(objectname:short)"],
+        &[
+            "branch",
+            "--format=%(refname:short)|%(upstream:short)|%(objectname:short)",
+        ],
         &[],
         24000,
     )?;
@@ -615,7 +624,14 @@ mod tests {
     fn git(repo: &Path, args: &[&str]) {
         // Per-command identity: never touch the developer's global Git config.
         let status = std::process::Command::new("git")
-            .args(["-c", "user.email=velum-test@example.com", "-c", "user.name=Velum Test", "-c", "commit.gpgsign=false"])
+            .args([
+                "-c",
+                "user.email=velum-test@example.com",
+                "-c",
+                "user.name=Velum Test",
+                "-c",
+                "commit.gpgsign=false",
+            ])
             .args(args)
             .current_dir(repo)
             .stdin(std::process::Stdio::null())
@@ -675,10 +691,7 @@ mod tests {
             git_status(&fixture.0),
             git_diff(&fixture.0, "", None),
         ] {
-            assert_eq!(
-                result.unwrap_err(),
-                "No Git repository detected."
-            );
+            assert_eq!(result.unwrap_err(), "No Git repository detected.");
         }
     }
     #[test]
@@ -686,7 +699,13 @@ mod tests {
         let Some(repo) = git_repo() else {
             return;
         };
-        for bad in ["../outside", "C:\\outside", ".git/config", "note.txt:secret", "sub/../.."] {
+        for bad in [
+            "../outside",
+            "C:\\outside",
+            ".git/config",
+            "note.txt:secret",
+            "sub/../..",
+        ] {
             assert!(git_diff(&repo.0, "", Some(bad)).is_err(), "{bad}");
         }
         for bad in ["-h", "--help", "HEAD;rm", "a b"] {

@@ -61,15 +61,15 @@ pub async fn git_state(workspace: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn git_file_diff(
-    workspace: String,
-    base: String,
-    path: String,
-) -> Result<Value, String> {
+pub async fn git_file_diff(workspace: String, base: String, path: String) -> Result<Value, String> {
     // Unified diff of one repository-relative file against `base`
     // (empty means HEAD). Read-only; see workspace_tools::git_diff.
     tauri::async_runtime::spawn_blocking(move || {
-        let relative = if path.is_empty() { None } else { Some(path.as_str()) };
+        let relative = if path.is_empty() {
+            None
+        } else {
+            Some(path.as_str())
+        };
         crate::workspace_tools::git_diff(Path::new(&workspace), &base, relative)
     })
     .await
