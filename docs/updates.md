@@ -50,28 +50,35 @@ the feed is unavailable.
 ## Publishing a new version
 
 GitHub builds the installer once per release; users download the compiled
-installer and do not need Rust, Node or a local checkout.
+installer and do not need Rust, Node or a local checkout. Every push to
+`main` ships a release automatically — there is no manual bump, tag or
+publish ritual. The **Auto-release on main** workflow bumps the patch version
+(`scripts/auto-bump.mjs` replicates a manual bump file for file), regenerates
+bundled dependency notices, verifies legal and release consistency, commits
+`[skip ci]`, pushes the `vMAJOR.MINOR.PATCH` tag and dispatches the
+**Windows release** workflow, which builds and signs the NSIS installer,
+writes `latest.json` and checksums, and publishes the GitHub release. GitHub's
+`releases/latest/download/latest.json` becomes the app's update feed.
+Published release assets are immutable in this workflow; make fixes in a new
+version — i.e. a new push to `main` — instead of replacing a published
+installer.
 
-1. Configure the two GitHub Actions secrets in `velumix/VelumCode` using
-   `scripts/configure-github-updates.ps1`: `TAURI_SIGNING_PRIVATE_KEY` and
-   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The helper reads local files, checks
-   the public key against the app configuration and sends secrets over stdin.
-2. Keep `package.json`, both npm lockfile version fields, the Cargo package
-   version and `src-tauri/tauri.conf.json` at the same version. Refresh bundled
-   dependency notices with `npm run legal:notices`. Review the current behavior
-   described in the privacy notice and terms, then update `reviewedAppVersion`
-   in `legal/publisher.json`. Add release notes under `docs/releases/VERSION.md`.
-3. Commit the release, create its `vMAJOR.MINOR.PATCH` tag and push that tag.
-   The **Windows release** workflow builds and signs the NSIS installer, writes
-   `latest.json` and checksums, and creates a GitHub release draft. It can also
-   be dispatched manually for an existing version tag.
-4. Wait for **Windows CI** and **Android CI** to pass for the release commit,
-   then review the draft and publish it as a stable release. GitHub's
-   `releases/latest/download/latest.json` becomes the app's update feed.
-   Published release assets are immutable in this workflow; make fixes in a
-   new version instead of replacing a published installer.
+Local version bookkeeping still matters because the automation derives the
+next version from the tree: keep `package.json`, both npm lockfile version
+fields, the Cargo package version and `src-tauri/tauri.conf.json` consistent
+(the release manifest check enforces this). Review the current behavior
+described in the privacy notice and terms, and keep `reviewedAppVersion` in
+`legal/publisher.json` current. Release notes under `docs/releases/VERSION.md`
+are generated from the commits since the previous tag; edit the generated file
+before pushing when a release deserves hand-written notes.
 
-The workflow creates drafts so publishing remains an intentional action.
+A release can still be rebuilt for an existing version tag by dispatching
+**Windows release** manually with that tag. Configure the two GitHub Actions
+secrets in `velumix/VelumCode` using
+`scripts/configure-github-updates.ps1`: `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The helper reads local files, checks
+the public key against the app configuration and sends secrets over stdin.
+
 The app's launch check, download and installation are automatic after publication. Updater signing
 is separate from Windows Authenticode code signing.
 
