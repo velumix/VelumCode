@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "appVersion": "0.7.2",
+  "appVersion": "0.7.3",
   "target": "x86_64-pc-windows-msvc",
   "scope": "Conservative Windows x64 inventory: installed npm non-dev packages; Cargo normal and build dependency closure (including host/procedural-macro tools); pinned NSIS, WebView2 SDK and Rust standard-library notices. Not a byte-level binary SBOM. Android has its own inventory. External provider CLIs, Tailscale, ADB and the separately installed WebView2 Runtime are not included as Velum-bundled packages.",
   "inputNormalization": "UTF-8 text with LF line endings; upstream notice/archive hashes use original bytes",
   "inputs": {
-    "package-lock.json": "5d40148928f941a3e03858b91bd5311c5527d2c76c622568c046d73ea84bf823",
-    "src-tauri/Cargo.lock": "ca546b0dde9e83841900bbe38eb07f241e169129f7bd1c40e8014d346bb59110",
+    "package-lock.json": "fd8206bf759f141326a860f90b3325e6624756a3b6693ea64f028451165f9d11",
+    "src-tauri/Cargo.lock": "7753931b6a83f7944aa6a3b0e0efd5e1388af28b920cbf0fbcfe694ac6bce6ef",
     "rust-toolchain.toml": "887f9be066a15585a2c583578e84b0fcb541126d81546276bad3d2ff00d61167",
     "legal/upstream.json": "a6d226c4bd3ca3afe7f956a0a3c1f904c639c66945dd22f0d653b472019570a0"
   },
