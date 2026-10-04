@@ -1,4 +1,4 @@
-Velum Code 0.7.5 — third-party software notices
+Velum Code 0.7.6 — third-party software notices
 
 Conservative Windows x64 inventory: installed npm non-dev packages; Cargo normal and build dependency closure (including host/procedural-macro tools); pinned NSIS, WebView2 SDK and Rust standard-library notices. Not a byte-level binary SBOM. Android has its own inventory. External provider CLIs, Tailscale, ADB and the separately installed WebView2 Runtime are not included as Velum-bundled packages.
 
