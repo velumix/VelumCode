@@ -136,7 +136,7 @@ confidential material into public support reports.
 
 ## 8. Fees, support and changes
 
-Version 0.7.6 has no Velum account, in-app billing or paid feature system. Provider
+Version 0.7.7 has no Velum account, in-app billing or paid feature system. Provider
 and other third-party charges are separate. Any future Velum purchase requires
 its own disclosed price, billing and cancellation/refund terms before purchase;
 these terms do not authorize undisclosed charges.
