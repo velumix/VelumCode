@@ -568,6 +568,15 @@
   font-size: calc(10px * var(--ui-scale));
   color: var(--muted);
 }
+.kanban-assignee-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.kanban-assignee-pick select {
+  flex: 1;
+  min-width: 0;
+}
 .kanban-card .kanban-bot-update {
   font-size: calc(11px * var(--ui-scale));
   color: var(--text);

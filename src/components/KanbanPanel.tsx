@@ -381,36 +381,59 @@ export default function KanbanPanel({
             </fieldset>
             <label>
               Assigned bot
-              <select
-                aria-label="Assigned bot"
-                value={editor.assignment?.bot_id || ""}
-                disabled={busy || readOnly}
-                onChange={(e) => {
-                  const bot = bots.find((b) => b.id === e.target.value);
-                  setEditor({
-                    ...editor,
-                    assignment: bot ? assignmentFor(bot) : null,
-                  });
-                }}
-              >
-                <option value="">Unassigned</option>
-                {bots
-                  .filter(
-                    (b) => b.enabled || b.id === editor.assignment?.bot_id,
-                  )
-                  .map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name}
-                      {b.enabled ? "" : " (disabled)"}
-                    </option>
-                  ))}
-                {editor.assignment &&
-                  !bots.some((b) => b.id === editor.assignment!.bot_id) && (
-                    <option value={editor.assignment.bot_id}>
-                      Removed bot · choose another
-                    </option>
-                  )}
-              </select>
+              <span className="kanban-assignee-pick">
+                {editor.assignment && (
+                  <BotAvatar
+                    bot={
+                      bots.find(
+                        (b) => b.id === editor.assignment!.bot_id,
+                      ) || {
+                        name: "Removed bot",
+                        avatar: "",
+                        color: "#92a6c0",
+                      }
+                    }
+                    size={28}
+                    status={(() => {
+                      const picked = bots.find(
+                        (b) => b.id === editor.assignment!.bot_id,
+                      );
+                      if (!picked) return "disabled";
+                      return picked.enabled ? "idle" : "disabled";
+                    })()}
+                  />
+                )}
+                <select
+                  aria-label="Assigned bot"
+                  value={editor.assignment?.bot_id || ""}
+                  disabled={busy || readOnly}
+                  onChange={(e) => {
+                    const bot = bots.find((b) => b.id === e.target.value);
+                    setEditor({
+                      ...editor,
+                      assignment: bot ? assignmentFor(bot) : null,
+                    });
+                  }}
+                >
+                  <option value="">Unassigned</option>
+                  {bots
+                    .filter(
+                      (b) => b.enabled || b.id === editor.assignment?.bot_id,
+                    )
+                    .map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                        {b.enabled ? "" : " (disabled)"}
+                      </option>
+                    ))}
+                  {editor.assignment &&
+                    !bots.some((b) => b.id === editor.assignment!.bot_id) && (
+                      <option value={editor.assignment.bot_id}>
+                        Removed bot · choose another
+                      </option>
+                    )}
+                </select>
+              </span>
             </label>
             {editor.assignment && (
               <div className="kanban-schedule">
@@ -725,6 +748,15 @@ export default function KanbanPanel({
                                     }
                                   }
                                   size={24}
+                                  status={(() => {
+                                    const assignee = bots.find(
+                                      (b) => b.id === card.assignment!.bot_id,
+                                    );
+                                    if (!assignee) return "disabled";
+                                    return assignee.enabled
+                                      ? "idle"
+                                      : "disabled";
+                                  })()}
                                 />
                                 <span>
                                   {bots.find(

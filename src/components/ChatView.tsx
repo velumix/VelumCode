@@ -925,7 +925,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
       <div ref={scrollRef} className="chat-scroll" onScroll={onScroll}>
         {blocks.length === 0 && interactions.requests.length === 0 && (
           <div className="chat-empty">
-            <div className="welcome-mark">{bot?<BotAvatar bot={bot} size={62}/>:<VelumMark size={62}/>}</div>
+            <div className="welcome-mark">{bot?<BotAvatar bot={bot} size={62} status={running ? "working" : "idle"}/>:<VelumMark size={62}/>}</div>
             <span className="welcome-eyebrow">From an idea to something real</span>
             <h2>{bot?`${bot.name}, ready to help.`:'What are we building?'}</h2>
             <p>Describe what you want to make. Or choose a starting point and make the prompt your own.</p>
@@ -971,7 +971,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
               return (
                 <div key={b.id} className="msg assistant">
                   <div className="message-header">
-                    <span className="message-avatar muse-avatar">{bot?<BotAvatar bot={bot} size={38}/>:<VelumMark size={38}/>}</span>
+                    <span className="message-avatar muse-avatar">{bot?<BotAvatar bot={bot} size={38} status={running ? "working" : "idle"}/>:<VelumMark size={38}/>}</span>
                     <div className="message-author"><strong>{bot?.name||providerNames[provider]}<span className="assistant-badge">{bot?providerNames[provider]:'AI'}</span></strong></div>
                     <CopyButton text={b.text} />
                     <button type="button" className="memory-usage" aria-label="Remember this answer" onClick={()=>onRemember(b.text)}><Icon name="memory" size={15}/></button>

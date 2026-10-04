@@ -337,7 +337,11 @@ export default function BotsPanel(props: Props) {
                     </details>
                   )}
                   <div className="bot-picture">
-                    <BotAvatar bot={editor} size={72} />
+                    <BotAvatar
+                      bot={editor}
+                      size={72}
+                      status={editor.enabled ? "idle" : "disabled"}
+                    />
                     <div>
                       <label className="bot-file-button">
                         Upload picture
@@ -361,7 +365,7 @@ export default function BotsPanel(props: Props) {
                           disabled={readOnly || busy}
                           onClick={() => patch({ avatar: "" })}
                         >
-                          Use initials
+                          Use energy orb
                         </button>
                       )}
                     </div>
@@ -683,7 +687,11 @@ export default function BotsPanel(props: Props) {
                   {view.profiles.map((bot) => (
                     <article className="bot-card" key={bot.id}>
                       <div className="bot-card-title">
-                        <BotAvatar bot={bot} size={44} />
+                        <BotAvatar
+                          bot={bot}
+                          size={44}
+                          status={bot.enabled ? "idle" : "disabled"}
+                        />
                         <div>
                           <h3>{bot.name}</h3>
                           <small>
@@ -731,8 +739,8 @@ export default function BotsPanel(props: Props) {
                       <Icon name="code" size={32} />
                       <h3>Give your team a personality.</h3>
                       <p>
-                        Create a bot with a name, picture, working style, and
-                        preferred model. Its memory stays with it.
+                        Create a bot with a name, energy look, working style,
+                        and preferred model. Its memory stays with it.
                       </p>
                       {!readOnly && (
                         <button
@@ -926,6 +934,14 @@ export default function BotsPanel(props: Props) {
                                 avatar: "",
                                 color: "#79a9ff",
                               }
+                            }
+                            status={
+                              run.status === "running"
+                                ? "working"
+                                : run.status === "failed" ||
+                                    run.status === "cancelled"
+                                  ? "error"
+                                  : "idle"
                             }
                           />
                           <span>

@@ -6,16 +6,24 @@
   overflow: hidden;
   border: 1px solid;
   border-radius: 30%;
-  font-size: calc(14px * var(--ui-scale));
   font-weight: 700;
   line-height: 1;
   vertical-align: middle;
+  padding: 2px;
+  box-sizing: border-box;
+}
+.bot-avatar.has-orb {
+  border-radius: 50%;
+  padding: 2px;
+}
+.bot-avatar.has-picture {
+  padding: 0;
 }
 .bot-avatar img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
-.bot-avatar > span {
-  font-size: inherit;
+.bot-avatar canvas {
+  pointer-events: none;
 }

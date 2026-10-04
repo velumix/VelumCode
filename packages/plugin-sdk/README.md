@@ -2,13 +2,13 @@
 
 Small, typed command plugins. No runtime dependencies or always-running plugin processes.
 
-## License status
+## License
 
-The SDK has not yet been assigned a project license or published to npm. Public
-source is not an open source grant; review [legal status](../../LEGAL.md) before
-redistributing SDK code. The publisher must approve the SDK license and include
-it in the package before publication. Your own plugin and any included
-dependencies need their own appropriate licenses and retained notices.
+Apache-2.0 — see [LICENSE](./LICENSE). The `sdkLicense` decision is recorded in
+`legal/publisher.json`. `npm pack` / `npm publish` are blocked by
+`publish-guard.mjs` unless the `LICENSE` file and matching `"license"` field
+are present. Your own plugin and any included dependencies need their own
+appropriate licenses and retained notices.
 
 ## Use the SDK
 

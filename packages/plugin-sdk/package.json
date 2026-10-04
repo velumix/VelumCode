@@ -2,8 +2,22 @@
   "name": "@velum-code/plugin-sdk",
   "version": "0.1.0",
   "description": "Typed command plugins for Velum Code",
+  "license": "Apache-2.0",
   "type": "module",
   "exports": { ".": { "types": "./index.d.ts", "import": "./index.js" } },
-  "files": ["index.js", "index.d.ts", "README.md"],
-  "bin": { "create-velum-plugin": "./create.mjs" }
+  "types": "./index.d.ts",
+  "files": ["index.js", "index.d.ts", "README.md", "LICENSE"],
+  "bin": { "create-velum-plugin": "./create.mjs" },
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/velumix/VelumCode.git",
+    "directory": "packages/plugin-sdk"
+  },
+  "homepage": "https://github.com/velumix/VelumCode/blob/main/docs/plugins.md",
+  "bugs": "https://github.com/velumix/VelumCode/issues",
+  "keywords": ["velum-code", "plugins", "sdk"],
+  "engines": { "node": ">=20" },
+  "publishConfig": { "access": "public" },
+  "scripts": { "prepack": "node ./publish-guard.mjs" }
 }

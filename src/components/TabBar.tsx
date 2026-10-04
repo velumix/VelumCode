@@ -101,7 +101,7 @@ export default function TabBar({ tabs, activeId, onSelect, onClose, onNew, onCom
             if (e.button === 1) onClose(t.id);
           }}
         >
-          <span className="conversation-icon">{t.bot?<BotAvatar bot={t.bot} size={32}/>:<Icon name="chat" size={19}/>}</span>
+          <span className="conversation-icon">{t.bot?<BotAvatar bot={t.bot} size={32} status={t.status.kind === "running" ? "working" : t.status.kind === "error" ? "error" : "idle"}/>:<Icon name="chat" size={19}/>}</span>
           <span className="tab-copy"><span className="tab-title">{conversationTitle(t.title)}</span><span className="tab-detail">{pillDetail(t)}</span></span>
           {t.status.kind === "running" && <span className="status-dot running" aria-hidden="true" />}
           <span
