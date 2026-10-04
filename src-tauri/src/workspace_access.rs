@@ -376,9 +376,20 @@ impl Probe {
         prompt
     }
     pub fn observe_line(&mut self, provider: Provider, line: &str) {
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
+        let Ok(mut value) = serde_json::from_str::<Value>(line) else {
             return;
         };
+        if provider == Provider::Codex && value["method"] == "item/completed" {
+            let mut item = crate::codex_control::normalize_item(&value["params"]["item"]);
+            if let Some(changes) = item["changes"].as_array_mut() {
+                for change in changes {
+                    if let Some(kind) = change["kind"]["type"].as_str().map(str::to_owned) {
+                        change["kind"] = Value::String(kind);
+                    }
+                }
+            }
+            value = serde_json::json!({"type":"item.completed","item":item});
+        }
         match provider {
             Provider::Codex if value["type"] == "item.completed" => {
                 let item = &value["item"];
@@ -424,8 +435,18 @@ impl Probe {
                     }
                 }
             }
-            Provider::Muse if value["payload_type"] == "tool.result" => {
-                let text = value["payload"]["text"].as_str().unwrap_or("");
+            Provider::Muse
+                if value["payload_type"] == "tool.result"
+                    || (value["method"] == "item/completed"
+                        && value["params"]["item"]["kind"] == "toolCall") =>
+            {
+                let text = if value["method"] == "item/completed" {
+                    value["params"]["item"]["visibleOutput"]
+                        .as_str()
+                        .unwrap_or("")
+                } else {
+                    value["payload"]["text"].as_str().unwrap_or("")
+                };
                 // Muse's managed PowerShell tool wraps actual output in JSON.
                 // An echoed command is never execution evidence.
                 if let Ok(result) = serde_json::from_str::<Value>(text) {

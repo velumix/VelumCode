@@ -361,6 +361,90 @@ pub fn git_diff(root: &Path, base: &str, relative: Option<&str>) -> Result<Value
     }))
 }
 
+pub fn git_log(root: &Path, limit: usize) -> Result<Value, String> {
+    // Recent commits for the Git panel and the git_log agent tool.
+    // Read-only; same per-command safe.directory confinement as git_diff.
+    let repository = repository_root(root).ok_or("No Git repository detected.")?;
+    let limit = limit.clamp(1, 50);
+    let limit_arg = format!("-n{limit}");
+    let (text, truncated) = run_git(
+        "log",
+        &repository,
+        &[
+            "log",
+            "--format=%H%x1f%h%x1f%an%x1f%ad%x1f%s",
+            "--date=short",
+            &limit_arg,
+        ],
+        &[],
+        24000,
+    )?;
+    let commits: Vec<Value> = text
+        .lines()
+        .filter_map(|line| {
+            if line.is_empty() {
+                return None;
+            }
+            let mut parts = line.splitn(5, '\x1f');
+            let hash = parts.next().unwrap_or("");
+            let short = parts.next().unwrap_or("");
+            let author = parts.next().unwrap_or("");
+            let date = parts.next().unwrap_or("");
+            let subject = parts.next().unwrap_or("");
+            if hash.is_empty() || short.is_empty() {
+                return None;
+            }
+            Some(json!({
+                "hash": hash,
+                "short": short,
+                "author": author.chars().take(120).collect::<String>(),
+                "date": date,
+                "subject": subject.chars().take(240).collect::<String>(),
+            }))
+        })
+        .collect();
+    Ok(json!({
+        "commits": commits,
+        "truncated": truncated,
+        "trust": "Selected repository only, for this command.",
+        "global_config_changed": false,
+    }))
+}
+
+pub fn git_sync(root: &Path) -> Result<Value, String> {
+    // Ahead/behind of HEAD against its upstream. Missing upstream or a
+    // detached HEAD is a settled zero, never an error, so the Git panel can
+    // keep showing branches and status.
+    let repository = repository_root(root).ok_or("No Git repository detected.")?;
+    let (upstream, _) = run_git(
+        "upstream",
+        &repository,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+        &[],
+        1024,
+    )
+    .unwrap_or_default();
+    let upstream = upstream.trim().to_string();
+    if upstream.is_empty() {
+        return Ok(json!({"upstream": "", "ahead": 0, "behind": 0}));
+    }
+    let range = format!("HEAD...{upstream}");
+    let (counts, _) = run_git(
+        "sync",
+        &repository,
+        &["rev-list", "--left-right", "--count", &range],
+        &[],
+        1024,
+    )
+    .unwrap_or_default();
+    let mut numbers = counts.split_whitespace().filter_map(|n| n.parse::<u64>().ok());
+    Ok(json!({
+        "upstream": upstream,
+        "ahead": numbers.next().unwrap_or(0),
+        "behind": numbers.next().unwrap_or(0),
+    }))
+}
+
 // Drain both pipes even after the retained output is full, so a large tree
 // cannot fill a pipe and deadlock Git. Never retain stderr/config contents.
 fn read_bounded(mut reader: impl Read, cap: usize) -> Result<(Vec<u8>, bool), String> {
@@ -690,9 +774,35 @@ mod tests {
             git_branches(&fixture.0),
             git_status(&fixture.0),
             git_diff(&fixture.0, "", None),
+            git_log(&fixture.0, 20),
+            git_sync(&fixture.0),
         ] {
             assert_eq!(result.unwrap_err(), "No Git repository detected.");
         }
+    }
+    #[test]
+    fn git_reports_log_newest_first_and_zero_sync_without_upstream() {
+        let Some(repo) = git_repo() else {
+            return;
+        };
+        fs::write(repo.0.join("second.txt"), "second\n").unwrap();
+        git(&repo.0, &["add", "second.txt"]);
+        git(&repo.0, &["commit", "-m", "second commit"]);
+        let log = git_log(&repo.0, 20).unwrap();
+        let commits = log["commits"].as_array().unwrap();
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0]["subject"], "second commit");
+        assert_eq!(commits[1]["subject"], "initial");
+        assert_eq!(commits[0]["author"], "Velum Test");
+        assert!(!commits[0]["hash"].as_str().unwrap().is_empty());
+        assert!(!commits[0]["short"].as_str().unwrap().is_empty());
+        assert_eq!(log["global_config_changed"], false);
+        let limited = git_log(&repo.0, 1).unwrap();
+        assert_eq!(limited["commits"].as_array().unwrap().len(), 1);
+        let sync = git_sync(&repo.0).unwrap();
+        assert_eq!(sync["upstream"], "");
+        assert_eq!(sync["ahead"], 0);
+        assert_eq!(sync["behind"], 0);
     }
     #[test]
     fn git_diff_rejects_traversal_metadata_and_option_like_revisions() {

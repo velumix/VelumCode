@@ -1,0 +1,92 @@
+.interaction-panel { display: grid; gap: 8px; margin: 4px 0; text-align: left; min-width: 0; }
+.interaction-card { min-width: 0; color: var(--text); overflow-wrap: anywhere; font-size: calc(12px * var(--ui-scale, 1)); line-height: 1.5; }
+.interaction-pending { padding: 14px 16px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); box-shadow: 0 2px 6px #00000008; }
+.interaction-heading { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.interaction-heading > svg { color: var(--accent); flex-shrink: 0; }
+.interaction-heading strong { font-size: calc(13px * var(--ui-scale, 1)); font-weight: 600; }
+.interaction-tool { color: var(--muted); font-size: calc(11px * var(--ui-scale, 1)); margin-left: auto; text-align: right; overflow-wrap: anywhere; }
+.interaction-description { margin: 9px 0 0; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.interaction-command { display: flex; align-items: flex-start; gap: 9px; margin: 10px 0 2px; padding: 9px 10px; border-radius: 5px; background: var(--bg); }
+.interaction-command > svg { color: var(--subtle); margin-top: 2px; flex-shrink: 0; }
+.interaction-command code { min-width: 0; font: calc(11px * var(--ui-scale, 1))/1.6 var(--code-font, monospace); white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.interaction-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; margin-top: 12px; }
+.interaction-disclosures, .interaction-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.interaction-card button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 5px 11px; border: 1px solid var(--control-border, var(--border)); border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; font: inherit; line-height: 1.5; overflow-wrap: anywhere; }
+.interaction-card button:hover:not(:disabled) { background: var(--hover); }
+.interaction-card button:disabled { cursor: default; opacity: .5; }
+.interaction-card .interaction-primary { background: var(--accent); color: var(--on-accent, var(--bg)); border-color: transparent; font-weight: 600; }
+.interaction-card .interaction-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 85%, var(--text)); }
+.interaction-card .interaction-link { padding: 4px 3px; min-height: 28px; border-color: transparent; color: var(--muted); font-size: calc(11px * var(--ui-scale, 1)); gap: 4px; }
+.interaction-link[aria-expanded="true"] { color: var(--text); }
+.interaction-chevron { flex-shrink: 0; transition: transform 150ms ease; }
+[aria-expanded="true"] > .interaction-chevron, details[open] > summary > .interaction-chevron { transform: rotate(180deg); }
+.interaction-expanded { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.interaction-expanded[hidden] { display: none; }
+.interaction-payload { margin: 10px 0 0; padding: 10px 12px; max-height: 260px; overflow: auto; border-radius: 5px; background: var(--bg); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; font: calc(11px * var(--ui-scale, 1))/1.65 var(--code-font, monospace); text-align: left; scrollbar-width: thin; }
+.interaction-expanded > .interaction-payload { margin: 0; }
+.interaction-feedback { display: grid; gap: 6px; color: var(--muted); font-size: calc(11px * var(--ui-scale, 1)); }
+.interaction-card textarea, .interaction-card input[type="password"] { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--control-border, var(--border)); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; font-size: calc(12px * var(--ui-scale, 1)); line-height: 1.5; }
+.interaction-card textarea { resize: vertical; min-height: 58px; }
+.interaction-card textarea::placeholder { color: var(--subtle); }
+.interaction-card button:focus-visible, .interaction-card textarea:focus-visible, .interaction-card input:focus-visible, .interaction-panel summary:focus-visible, .interaction-record summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.interaction-choice { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.interaction-choice + .interaction-choice { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.interaction-choice > div { min-width: 0; flex: 1; }
+.interaction-choice > button { max-width: 58%; }
+.interaction-scope { color: var(--muted); font-size: calc(11px * var(--ui-scale, 1)); }
+.interaction-rule { margin: 4px 0 0; max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: calc(11px * var(--ui-scale, 1))/1.6 var(--code-font, monospace); }
+.interaction-card fieldset { min-width: 0; margin: 14px 0; padding: 0; border: 0; }
+.interaction-card legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
+.interaction-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 6px; }
+.interaction-option { display: flex; align-items: flex-start; gap: 9px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.interaction-option:hover { background: var(--hover); }
+.interaction-option:has(input:disabled) { cursor: default; }
+.interaction-option:has(input:checked) { background: var(--accent-dim); border-color: var(--accent-border, var(--accent)); }
+.interaction-option input { flex-shrink: 0; margin: 3px 0 0; accent-color: var(--accent); }
+.interaction-option small { display: block; color: var(--muted); font-size: calc(11px * var(--ui-scale, 1)); margin-top: 1px; }
+.interaction-options:not(:empty) + .interaction-feedback { margin-top: 10px; }
+.interaction-write-answer { margin-top: 8px; }
+.interaction-write-answer > summary { display: flex; align-items: center; gap: 5px; min-height: 28px; width: fit-content; list-style: none; color: var(--muted); font-size: calc(11px * var(--ui-scale, 1)); cursor: pointer; }
+.interaction-write-answer > summary::-webkit-details-marker { display: none; }
+.interaction-write-answer .interaction-feedback { margin-top: 6px; }
+.interaction-question-actions { justify-content: flex-end; }
+.interaction-question-details { margin-bottom: 12px; color: var(--muted); }
+.interaction-question-details summary { cursor: pointer; }
+.interaction-meta { margin: 6px 0; color: var(--muted); font-size: calc(11px * var(--ui-scale, 1)); }
+.interaction-state { margin: 12px 0 0; font-size: calc(11px * var(--ui-scale, 1)); color: var(--muted); }
+.interaction-state span { margin-left: 8px; }
+.interaction-error { margin: 10px 0 0; color: var(--danger); font-size: calc(12px * var(--ui-scale, 1)); }
+.interaction-record { min-width: 0; font-size: calc(11px * var(--ui-scale, 1)); color: var(--muted); }
+.interaction-record > summary, .interaction-history > summary { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 4px 0; cursor: pointer; list-style: none; }
+.interaction-record > summary::-webkit-details-marker, .interaction-history > summary::-webkit-details-marker { display: none; }
+.interaction-record > summary > svg:first-child { flex-shrink: 0; }
+.interaction-record-tool { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.interaction-record-tool::before { content: '·'; margin-right: 8px; }
+.interaction-record-source { margin-left: auto; font-size: calc(10px * var(--ui-scale, 1)); }
+.interaction-record .interaction-chevron { margin-left: auto; }
+.interaction-record-source + .interaction-chevron { margin-left: 0; }
+.interaction-history { font-size: calc(11px * var(--ui-scale, 1)); color: var(--muted); }
+.interaction-history > summary .interaction-chevron { margin-left: auto; }
+.interaction-history > section { margin-left: 22px; }
+.interaction-sr-only { position: absolute; width: 1px; height: 1px; padding: 0 !important; margin: -1px !important; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.phone-app .interaction-panel { margin: 12px 0; }
+.phone-app .interaction-card button { min-height: 44px; }
+.phone-app .interaction-record > summary, .phone-app .interaction-history > summary, .phone-app .interaction-option { min-height: 44px; }
+.phone-app .interaction-question-details > summary { min-height: 44px; align-content: center; }
+.phone-app .interaction-toolbar { align-items: stretch; }
+.phone-app .interaction-disclosures { justify-content: space-between; width: 100%; }
+.phone-app .interaction-toolbar > .interaction-actions { margin-left: auto; }
+.phone-app .interaction-record-source { text-align: right; }
+.phone-app .interaction-write-answer > summary { min-height: 44px; }
+.phone-app .interaction-card textarea, .phone-app .interaction-card input[type="password"] { font-size: max(16px, calc(12px * var(--ui-scale, 1))); }
+.phone-app .interaction-card input[type="password"] { min-height: 44px; }
+@media (max-width: 480px) {
+  .interaction-pending { padding: 12px; }
+  .interaction-tool { max-width: 35%; }
+  .interaction-toolbar { gap: 6px; }
+  .interaction-choice { align-items: stretch; flex-direction: column; gap: 8px; }
+  .interaction-choice > button { max-width: 100%; }
+  .interaction-card .interaction-question-actions { gap: 6px; }
+  .interaction-question-actions > button { flex: 1; padding-inline: 8px; }
+}
+@media (prefers-reduced-motion: reduce) { .interaction-chevron { transition: none; } }

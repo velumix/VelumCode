@@ -6,9 +6,14 @@ mod child_process;
 mod desktop;
 mod events;
 mod history;
+mod interactions;
 mod kanban;
 mod memory;
 mod message_queue;
+mod muse_msp;
+mod codex_control;
+mod provider_control;
+mod muse_view;
 mod plugin_catalog;
 mod plugin_github;
 mod plugins;
@@ -131,10 +136,13 @@ pub fn run() {
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,
+            pty::pty_close_continuation,
             runner::agent_new,
             runner::agent_validate_workspace,
             runner::agent_send,
             runner::agent_queue,
+            runner::agent_interactions,
+            runner::agent_respond,
             runner::agent_stop,
             runner::agent_destroy,
             remote::remote_status,

@@ -195,7 +195,8 @@ textarea:focus-visible {
     .md-inline,
     .md-code pre,
     .tool-output,
-    .approval-card pre,
+    .interaction-payload,
+    .interaction-rule,
     .context-preview,
     .phone-tool pre
   ) {

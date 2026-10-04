@@ -13,6 +13,22 @@ Start with an idea in the composer. **Build something**, **Improve what's here**
 
 Under **Settings > Preferences > Conversation preferences**, turn off **Compact assistant controls** or **Group agent activity** if you prefer the full controls and individual tool cards. Themes, glass, typography, and layout preferences still apply. On a phone, assistant settings open from a disclosure above the conversation.
 
+## Review an action
+
+Permission requests sit inside the conversation as compact cards. A short command or affected-file preview appears above **Allow once** and the provider's rejection action. **Details** keeps the full request available, including long commands and proposed patches.
+
+Open **Add guidance** to suggest another approach when declining. **More options** contains broader grants with their scope and any proposed saved rule visible before you select one. Velum only offers the choices supplied by the provider. Buttons stay disabled while a response is being confirmed.
+
+Questions show their choices first; **Write your own answer** opens an optional text field and changes to **Edit your answer** once filled. Selection limits apply before sending. Completed requests and permission records collapse into small reviewable rows. Desktop and phone use the same controls, with larger touch targets on the phone. A phone without control access can inspect the request but cannot answer it.
+
+## Recover a request
+
+Failed, blocked, stopped, and unsent requests offer **Retry request** and **Revise request** on desktop. Failed, blocked, and stopped turns have the same controls on a phone with control access. Revise opens a separate editor containing the original request; retrying keeps your follow-up draft in the main composer. Reopened conversations retain recovery controls when the original request is still in the saved transcript.
+
+Review any partial changes before retrying, and resolve a reported permission issue first. The retry sends the original or edited request to the same conversation with its current settings. When messages are already queued, **Queue retry** adds it to the end; a paused queue waits for you to resume it. A newer request retires the previous turn's recovery controls.
+
+A phone can send up to 16,000 characters. If a desktop request exceeds that limit, the recovery editor keeps the full text and asks you to shorten it before retrying.
+
 ## Help the next attempt
 
 Choose **Correct response** below a completed answer. Describe what should change, then send the correction. Velum includes a short excerpt of that answer so the agent can identify it. Your separate composer draft stays intact. If another response is active, the correction enters the same message queue.

@@ -40,6 +40,7 @@ export async function boot(page: Page, delay = 0, configure = true, waitForStart
         toolPermissions:{enabled:true,file_delete:true,vault_search:true,browser:true,native_screenshot:false,native_control:false},
         sessions: new Map(),
         agentQueues: new Map<string, any>(),
+        interactions: new Map<string, any>(),
         failSend: false,
         antigravityInstalled: false,
         auth: {
@@ -188,6 +189,44 @@ export async function boot(page: Page, delay = 0, configure = true, waitForStart
             return structuredClone(api.jobs);
           }
           if (cmd === "git_state") {
+            if (args.workspace?.includes("plain")) throw "No Git repository detected.";
+            if (args.workspace?.includes("flaky")) {
+              api.gitFlakyCalls = (api.gitFlakyCalls || 0) + 1;
+              if (api.gitFlakyCalls <= (api.gitFlakyFailures ?? 0))
+                throw "Git branch timed out or could not be monitored; no Git configuration was changed.";
+              return {
+                root: "C:\\Flaky",
+                current: "flaky-branch",
+                branches: [{ name: "flaky-branch", upstream: "", head: "c0ffee1" }],
+                branches_truncated: false,
+                status: "## flaky-branch\n M src/Flaky.tsx",
+                status_truncated: false,
+                log: [],
+                log_truncated: false,
+                upstream: "",
+                ahead: 0,
+                behind: 0,
+                trust: "Selected repository only, for this command.",
+                global_config_changed: false,
+              };
+            }
+            if (args.workspace?.includes("second")) {
+              return {
+                root: "C:\\Second",
+                current: "feature/two",
+                branches: [{ name: "feature/two", upstream: "", head: "b1af248" }],
+                branches_truncated: false,
+                status: "## feature/two\n M src/Other.tsx",
+                status_truncated: false,
+                log: [],
+                log_truncated: false,
+                upstream: "",
+                ahead: 0,
+                behind: 0,
+                trust: "Selected repository only, for this command.",
+                global_config_changed: false,
+              };
+            }
             return {
               root: "C:\\Projects\\VelumCode",
               current: "main",
@@ -198,6 +237,14 @@ export async function boot(page: Page, delay = 0, configure = true, waitForStart
               branches_truncated: false,
               status: "## main...origin/main\n M src/App.tsx\n?? src/components/GitPanel.tsx",
               status_truncated: false,
+              log: [
+                { hash: "a2324740000000000000000000000000000000000", short: "a232474", author: "Velum Test", date: "2026-10-03", subject: "Polish conversation layout" },
+                { hash: "b1af2480000000000000000000000000000000000", short: "b1af248", author: "Velum Test", date: "2026-10-02", subject: "Add Git diff panel" },
+              ],
+              log_truncated: false,
+              upstream: "origin/main",
+              ahead: 0,
+              behind: 0,
               trust: "Selected repository only, for this command.",
               global_config_changed: false,
             };
@@ -440,6 +487,17 @@ export async function boot(page: Page, delay = 0, configure = true, waitForStart
               connections:[{name:'GitHub',status:'untested',detail:'No live health evidence.'}],attachments:{detail:'Velum does not discover provider UI/document sessions.'},
               providers:[{provider:'muse',installed:true,authentication:'not checked',tool_connections:'not checked'},{provider:'antigravity',installed:true,authentication:'not checked',tool_connections:'not checked'}],memory:{readable:true,enabled:true,notes:2,budget_bytes:3000,capture:'review'},sessions:{active:0,failed:0,blocked:0}};
           }
+          if (cmd === 'agent_interactions') return structuredClone(api.interactions.get(args.id) || {generation:'',revision:0,active:false,requests:[]});
+          if (cmd === 'agent_respond') {
+            if(api.holdResponse) await new Promise<void>(resolve => { api.releaseResponse = resolve; });
+            if(api.failResponse) throw 'This request changed or already received a response. Review its current state.';
+            const snapshot=api.interactions.get(args.id), decision=args.decision;
+            const request=snapshot?.requests.find((r:any)=>r.id===decision.id);
+            if(!snapshot?.active || snapshot.generation!==decision.generation || !request || request.revision!==decision.revision || request.status!=='pending') throw 'This request changed or already received a response. Review its current state.';
+            request.status='submitting';request.source='desktop';snapshot.revision++;
+            api.emit('agent-interactions',{id:args.id,snapshot:structuredClone(snapshot)});
+            return structuredClone(snapshot);
+          }
           if (cmd === "agent_new") {
             if (delay) await new Promise((r) => setTimeout(r, delay));
             if (api.holdAgentNew) await new Promise<void>(resolve => { api.releaseAgentNew = resolve; });
@@ -483,6 +541,8 @@ export async function boot(page: Page, delay = 0, configure = true, waitForStart
             publishQueue(args.id);nextQueued(args.id);return structuredClone(q);
           }
           if (cmd === "agent_stop") {
+            const snapshot=api.interactions.get(args.id);
+            if(snapshot){snapshot.active=false;snapshot.revision++;for(const request of snapshot.requests)if(['pending','submitting'].includes(request.status))request.status='expired';api.emit('agent-interactions',{id:args.id,snapshot:structuredClone(snapshot)});}
             api.agent({kind:'turn_end',status:'cancelled'},args.id);
             return;
           }

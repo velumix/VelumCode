@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import type { MemoryRequest, MemoryView } from "../memory";
 import {
   newBot,
@@ -26,6 +26,7 @@ import "./BotsPanel.css";
 const MemoryPanel = lazy(() => import("./MemoryPanel"));
 const cleanView: BotView = { profiles: [], root: "", warnings: [] };
 type Props = {
+  renderInteractions?: (sessionId: string) => ReactNode;
   workspace: string;
   provider: Provider;
   options: RunOptions;
@@ -895,7 +896,7 @@ export default function BotsPanel(props: Props) {
                       {result.detail && (
                         <p
                           className={
-                            result.status === "completed"
+                            result.status === "completed" || result.detail.startsWith('Waiting for your response.')
                               ? "bot-help"
                               : "bot-error"
                           }
@@ -906,6 +907,7 @@ export default function BotsPanel(props: Props) {
                       <Markdown
                         text={result.output || "No response text was recorded."}
                       />
+                      {result.status === 'running' && props.renderInteractions?.(result.session_id)}
                     </article>
                   ) : jobs ? (
                     <>
@@ -934,7 +936,7 @@ export default function BotsPanel(props: Props) {
                             </small>
                           </span>
                           <span className={`bot-run-status ${run.status}`}>
-                            {run.status}
+                            {run.detail.startsWith('Waiting for your response.') ? 'awaiting response' : run.status}
                           </span>
                         </button>
                       ))}

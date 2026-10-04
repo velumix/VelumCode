@@ -89,7 +89,7 @@ test('host success and blocked agent writes stay separate; permission changes in
   await page.getByLabel('Close diagnostics').click();
   await page.getByLabel('YOLO mode').click();
   await expect(page.getByLabel('YOLO mode')).toHaveAttribute('aria-pressed','true');
-  await expect(page.locator('.notice').last()).toContainText('invalidated');
+  await expect(page.locator('.notice').filter({hasText:'invalidated'})).toBeVisible();
   const calls=await page.evaluate(()=>(window as any).qa.calls);
   expect(calls.filter((c:any)=>c.cmd==='agent_set_permissions').at(-1).args.yolo).toBe(true);
   await page.getByLabel('Project context and diagnostics').click();

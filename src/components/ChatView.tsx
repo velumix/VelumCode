@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import Markdown from "./Markdown";
@@ -14,7 +14,10 @@ import UsageStrip from './UsageStrip';
 import MessageQueue from './MessageQueue';
 import AgentActivity from './AgentActivity';
 import CorrectionComposer from './CorrectionComposer';
-import { correctionPrompt, groupActivity, lastMatch, lessonTitle, projectName } from '../conversationUX';
+import RequestRecovery from './RequestRecovery';
+import InteractionPanel, { PermissionRecord } from './InteractionPanel';
+import { emptyInteractions, mergeInteractionResponse, type InteractionSnapshot } from '../interactions';
+import { correctionPrompt, filterSlashCommands, friendlyTool, groupActivity, lastMatch, latestRecovery, lessonTitle, projectName, recoverableRequest, type RecoverableRequest, type SlashCommand } from '../conversationUX';
 import type { MemoryView } from '../memory';
 import { emptyQueue, type MessageQueue as Queue } from '../messageQueue';
 import ProviderWait from './ProviderWait';
@@ -45,7 +48,7 @@ type Block =
       result?: string;
       reason?: string;
     }
-  | { id: number; kind: "notice"; text: string; tone: "info" | "error" }
+  | { id: number; kind: "notice"; text: string; tone: "info" | "error"; recovery?: RecoverableRequest }
   | { id: number; kind: "approval"; tool?: string; summary: string; status: string };
 
 interface TodoEntry {
@@ -55,10 +58,12 @@ interface TodoEntry {
 
 interface AgentEventEnvelope {
   id: string;
+  seq?: number;
   event: { kind: string; [key: string]: unknown };
 }
 
 interface NewInfo {
+  live?: { revision: number; running: boolean; yolo: boolean; terminal: boolean; queue: Queue } | null;
   id: string;
   session_id: string;
   workspace: string;
@@ -68,6 +73,9 @@ interface NewInfo {
 }
 
 interface ChatViewProps {
+  terminalOwnsConversation?: boolean;
+  onContinueInTerminal?: () => void;
+  onCloseContinuedTerminal?: () => Promise<void>;
   botId?: string;
   taskId?: string;
   onPluginHandle: (id: string, handle: PluginChatHandle | null) => void;
@@ -84,27 +92,8 @@ interface ChatViewProps {
   onTitle: (sessionId: string, title: string) => void;
 }
 
-const FRIENDLY_TOOLS: Record<string, string> = {
-  powershell: "Shell",
-  read_file: "Read",
-  write_file: "Write",
-  edit_file: "Edit",
-  search: "Search",
-  read_memory: "Memory",
-  add_memory: "Memory",
-  edit_memory: "Memory",
-  request_user_input: "Question",
-  write_todos: "Todos",
-  web_fetch: "Web",
-  web_search: "Web",
-};
-
 const PREVIEW_LINES = 6;
 const RENDER_CAP = 4000;
-
-function friendlyTool(name: string): string {
-  return FRIENDLY_TOOLS[name] ?? name;
-}
 
 function isPlainAllow(decision: string): boolean {
   return decision === "not_applicable" || decision.startsWith("allow:");
@@ -263,7 +252,9 @@ function ToolBlock({ block }: { block: Extract<Block, { kind: "tool" }> }) {
   );
 }
 
-export default function ChatView({ provider, options, initialWorkspace, sessionId, active, sessionKey, onStatus, onWorkspace, onTitle, onRemember, onPluginHandle, botId, taskId }: ChatViewProps) {
+export default function ChatView({ provider, options, initialWorkspace, sessionId, active, sessionKey, onStatus, onWorkspace, onTitle, onRemember, onPluginHandle, botId, taskId, terminalOwnsConversation: terminalFromParent = false, onContinueInTerminal, onCloseContinuedTerminal }: ChatViewProps) {
+  const [attachedTerminal, setAttachedTerminal] = useState(false);
+  const terminalOwnsConversation = terminalFromParent || attachedTerminal;
   const { settings } = usePreferences();
   const [bot,setBot]=useState<BotIdentity|null>(null);
   const [contextSnapshot, setContextSnapshot] = useState<string | null>(null);
@@ -302,9 +293,47 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
   const [showLatest, setShowLatest] = useState(false);
   const [memoryUsage,setMemoryUsage]=useState<{titles:string[];bytes:number}|null>(null);
   const [usage, setUsage] = useState<UsageSnapshot>({});
+  const [interactions, setInteractions] = useState<InteractionSnapshot>(emptyInteractions);
+  const refreshInteractions = useRef<() => Promise<void>>(async () => {});
   const [draftError, setDraftError] = useState(false);
   const [correction, setCorrection] = useState<{id:number;answer:string}|null>(null);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [slashOpen, setSlashOpen] = useState(false);
+  const [slashIdx, setSlashIdx] = useState(0);
+  const slashMatches = useMemo(() => {
+    if (!input.startsWith("/") || input.includes("\n")) return [];
+    return filterSlashCommands(input);
+  }, [input]);
+
+  const applySlashCommand = useCallback((cmd: SlashCommand) => {
+    setSlashOpen(false);
+    if (cmd.command === "/clear") {
+      setInput("");
+      inputRef.current = "";
+      setBlocks([]);
+      setTodos([]);
+      composerRef.current?.focus();
+      return;
+    }
+    setInput(cmd.prompt);
+    inputRef.current = cmd.prompt;
+    composerRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    const onInsertDraft = (e: Event) => {
+      const text = (e as CustomEvent<string>).detail;
+      if (!text) return;
+      const next = inputRef.current ? `${inputRef.current}\n\n${text}` : text;
+      if (next.length > 64000) return;
+      inputRef.current = next;
+      setInput(next);
+      composerRef.current?.focus();
+    };
+    window.addEventListener("velum:insert-draft", onInsertDraft);
+    return () => window.removeEventListener("velum:insert-draft", onInsertDraft);
+  }, []);
+
   const workspaceEditorId = useId();
   const identityRef = useRef({ workspace, sessionKey });
   useEffect(() => {
@@ -329,6 +358,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
   const clientMeasurementRef = useRef(new ClientMeasurement());
   const nativeIdRef = useRef<string | null>(null);
   const assistantSeenRef = useRef(false);
+  const turnPromptRef = useRef('');
   const optimisticPromptRef = useRef<{ prompt: string; blockId: number } | null>(null);
   const applyingRef = useRef(false);
   const titleAssignedRef = useRef(false);
@@ -363,6 +393,37 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
     return () => { closed = true; dispose?.(); };
   }, [sessionId]);
 
+  useEffect(() => {
+    setInteractions(emptyInteractions());
+    if (!ready) return;
+    let closed = false;
+    let version = 0;
+    let dispose: (() => void) | undefined;
+    const nativeId = nativeIdRef.current;
+    if (!nativeId) return;
+    const refresh = async () => {
+      const before = version;
+      const snapshot = await invoke<InteractionSnapshot>('agent_interactions', { id: nativeId });
+      if (!closed && nativeId === nativeIdRef.current && before === version) setInteractions(snapshot);
+    };
+    refreshInteractions.current = refresh;
+    void listen<{ id: string; snapshot: InteractionSnapshot }>('agent-interactions', event => {
+      if (closed || event.payload.id !== nativeId) return;
+      version++;
+      const next = event.payload.snapshot;
+      setInteractions(previous => previous.generation === next.generation ? mergeInteractionResponse(previous, next) : next);
+    }).then(async stop => {
+      if (closed) { stop(); return; }
+      dispose = stop;
+      await refresh();
+    }).catch(() => {});
+    return () => { closed = true; dispose?.(); refreshInteractions.current = async () => {}; };
+  }, [ready, sessionId, sessionKey, workspace, retry, provider]);
+
+  useEffect(() => {
+    if (runningRef.current) setStatus({kind:'running', detail:interactions.active && interactions.requests.some(request => ['pending','submitting'].includes(request.status)) ? 'Waiting for your response…' : 'Working…'});
+  }, [interactions, setStatus]);
+
   // Mount: subscribe, then register the agent session. Unmount: stop the
   // turn (via destroy) and drop the subscription.
   useEffect(() => {
@@ -370,9 +431,11 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
     const draftRevision = workspaceDraftRevision.current;
     setInitializing(true);
     let unlisten: (() => void) | undefined;
-    // A fresh native identity prevents old readers/events from touching a
-    // replacement session, including StrictMode's mount/cleanup replay.
-    const nativeId = `${sessionId}-agent-${crypto.randomUUID()}`;
+    // Fresh sessions get a new identity. On reload agent_new can return the
+    // existing live owner, whose numbered events are reconciled below.
+    let nativeId = `${sessionId}-agent-${crypto.randomUUID()}`;
+    let hydrating = true;
+    const buffered: AgentEventEnvelope[] = [];
     const explicitRestart = identityRef.current.sessionKey !== sessionKey;
     const restarting = identityRef.current.workspace !== workspace || explicitRestart;
     identityRef.current = { workspace, sessionKey };
@@ -389,6 +452,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
     setQueue(queueRef.current);
     runningRef.current = false;
     assistantSeenRef.current = false;
+    turnPromptRef.current = '';
     optimisticPromptRef.current = null;
     historyRef.current = [];
     setHistIdx(null);
@@ -430,6 +494,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
           setUsage(previous => ({ ...previous, turn: null }));
           setMemoryUsage(null);
           const prompt = asString(e.prompt) ?? "";
+          turnPromptRef.current = prompt;
           if (!e.remote && !e.queued && !replaying && optimisticPromptRef.current?.prompt === prompt) {
             optimisticPromptRef.current = null;
             break;
@@ -478,6 +543,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
           const reason = asString(e.reason);
           const finalText = asString(e.text);
           const needsFinal = !assistantSeenRef.current && !!finalText;
+          const recovery = recoverableRequest(status, turnPromptRef.current);
           setBlocks((prev) => {
             const next: Block[] = prev.map((b) => b.kind === "assistant" ? { ...b, open: false }
               : b.kind === "tool" && b.status === "running" ? { ...b, status } : b);
@@ -490,6 +556,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                   kind: "notice",
                   text: status === "cancelled" ? `Stopped.${reason ? ` ${reason}` : ""}` : reason || "The turn failed without an error description. Try again or check the terminal.",
                   tone: status === "cancelled" ? ("info" as const) : ("error" as const),
+                  recovery,
                 },
               ];
             }
@@ -627,19 +694,27 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
         await destroyRef.current;
         if (disposed) return;
         unlisten = await listen<AgentEventEnvelope>("agent-event", (e) => {
-          applyEvent(e.payload);
+          if (hydrating) { buffered.push(e.payload); if (buffered.length > 8000) buffered.shift(); }
+          else applyEvent(e.payload);
         });
         // The listener above filters by session id; register after attaching
         // so no event from our own session can slip past.
         if (disposed) return;
         const info = await invoke<NewInfo>("agent_new", { id: nativeId, workspace, tabId: sessionId, provider, options: optionsRef.current, resume: !restarting, botId:botId||null,taskId:taskId||null });
+        nativeId = info.id || nativeId;
         if (!disposed) {
           replaying = true;
           if (info.truncated) applyEvent({ id: nativeId, event: { kind: "notice", text: "Earlier display history was trimmed to keep recovery fast. The provider’s saved conversation is still used when continuing." } });
           for (const event of info.restored || []) applyEvent({ id: nativeId, event });
+          if (info.live) applyEvent({id:nativeId,event:{kind:'queue_state',queue:info.live.queue,running:info.live.running}});
           replaying = false;
+          hydrating = false;
+          for (const envelope of buffered) if (!info.live || (envelope.seq ?? Infinity) > info.live.revision) applyEvent(envelope);
+          buffered.length = 0;
           nativeIdRef.current = nativeId;
-          await invoke('agent_set_permissions', {id:nativeId,yolo:yoloRef.current});
+          setAttachedTerminal(!!info.live?.terminal);
+          if (info.live) { yoloRef.current = info.live.yolo; setYolo(info.live.yolo); }
+          else await invoke('agent_set_permissions', {id:nativeId,yolo:yoloRef.current});
           if (disposed) return;
           setEffective(info.workspace);
           setWorkspaceNotice(info.workspace_notice || null);
@@ -647,7 +722,9 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
           // or selected while the provider was starting.
           if (workspaceDraftRevision.current === draftRevision) setDraft(info.workspace);
           setReady(true);
-          setStatus({ kind: "idle" });
+          // Replay already established the last turn's outcome. Keep failed
+          // and completed states visible when reopening a conversation.
+          if (lastStatusRef.current.kind === 'starting') setStatus({ kind: "idle" });
           onWorkspace(sessionId, info.workspace);
         }
       } catch (err) {
@@ -723,7 +800,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
       el.scrollTop = el.scrollHeight;
       setShowLatest(false);
     }
-  }, [blocks, todos, active, running]);
+  }, [blocks, todos, interactions, active, running]);
 
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -744,13 +821,14 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
       const prompt = text.trim();
       const nativeId = nativeIdRef.current;
       if (!prompt || !ready || !nativeId || applyingRef.current) return Promise.resolve(false);
+      if (terminalOwnsConversation) return Promise.resolve(false);
       if (runningRef.current || queueRef.current.items.length || queueRef.current.paused) {
         if (!preserveDraft) { inputRef.current = ''; setInput(''); setHistIdx(null); }
         return invoke('agent_send', { id: nativeId, prompt, yolo }).then(()=>nativeIdRef.current === nativeId).catch((error: unknown) => {
           if (nativeIdRef.current !== nativeId) return false;
           if (!preserveDraft) setInput(draft => draft || prompt);
           setBlocks(previous => [...previous, { id: ++idRef.current, kind: 'user', text: prompt, notSent: true },
-            { id: ++idRef.current, kind: 'notice', text: `Could not queue: ${String(error)}`, tone: 'error' }]);
+            { id: ++idRef.current, kind: 'notice', text: `Could not queue: ${String(error)}`, tone: 'error', recovery: recoverableRequest('not_sent', prompt) }]);
           return false;
         });
       }
@@ -758,6 +836,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
       setShowLatest(false);
       runningRef.current = true;
       assistantSeenRef.current = false;
+      turnPromptRef.current = prompt;
       if (!titleAssignedRef.current) {
         onTitle(sessionId, prompt.replace(/\s+/g, " ").slice(0, 48));
         titleAssignedRef.current = true;
@@ -785,7 +864,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
         if (nativeIdRef.current !== nativeId) return false;
         if (optimisticPromptRef.current?.blockId === userId) optimisticPromptRef.current = null;
         const message = err instanceof Error ? err.message : String(err);
-        setBlocks((prev) => [...prev.map((b) => b.id === userId && b.kind === "user" ? { ...b, notSent: true } : b), { id: ++idRef.current, kind: "notice", text: message, tone: "error" }]);
+        setBlocks((prev) => [...prev.map((b) => b.id === userId && b.kind === "user" ? { ...b, notSent: true } : b), { id: ++idRef.current, kind: "notice", text: message, tone: "error", recovery: recoverableRequest('not_sent', prompt) }]);
         if (!preserveDraft) setInput((draft) => draft || prompt);
         setRunning(false);
         runningRef.current = false;
@@ -793,7 +872,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
         return false;
       });
     },
-    [ready, sessionId, setStatus, yolo, onTitle],
+    [ready, sessionId, setStatus, yolo, onTitle, terminalOwnsConversation],
   );
 
   const send = useCallback(() => sendText(inputRef.current), [sendText]);
@@ -830,7 +909,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
   const openTodos = todos.filter((t) => t.status !== "completed");
   const doneTodos = todos.filter((t) => t.status === "completed");
   const lastAssistant = lastMatch(blocks,b=>b.kind==='assistant');
-  const lastNotice = lastMatch(blocks,b=>b.kind==='notice');
+  const recoveryNotice = latestRecovery(blocks);
   const workspaceEditorOpen = workspaceOpen || !settings.compactControls || draft !== effective || !!workspaceError;
   const rememberLesson = async (lesson: string) => {
     if (!effective || !nativeIdRef.current) throw new Error('Choose a project before saving guidance.');
@@ -844,7 +923,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
   return (
     <div className={active ? "chat-wrap" : "chat-wrap hidden"}>
       <div ref={scrollRef} className="chat-scroll" onScroll={onScroll}>
-        {blocks.length === 0 && (
+        {blocks.length === 0 && interactions.requests.length === 0 && (
           <div className="chat-empty">
             <div className="welcome-mark">{bot?<BotAvatar bot={bot} size={62}/>:<VelumMark size={62}/>}</div>
             <span className="welcome-eyebrow">From an idea to something real</span>
@@ -916,32 +995,28 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
             case "notice":
               return (
                 <div key={b.id} className={`notice ${b.tone}`}>
-                  {b.text}
-                  {b.tone==='error' && lastNotice?.id===b.id && !running && <div className="recovery-actions"><button type="button" disabled={!ready || applying} onClick={()=>{
-                    const previous = lastMatch(blocks,item=>item.kind==='user');
-                    if (previous?.kind !== 'user') return;
-                    if (!inputRef.current.trim()) { inputRef.current=previous.text;setInput(previous.text); }
-                    composerRef.current?.focus();
-                  }}>Revise request</button></div>}
+                  <span>{b.text}</span>
+                  {b.recovery && recoveryNotice?.id === b.id && !running && <RequestRecovery
+                    request={b.recovery} disabled={!ready || applying || permissionBusy}
+                    queued={queue.paused || queue.items.length > 0} paused={queue.paused}
+                    submit={prompt => sendText(prompt, true)}
+                  />}
                 </div>
               );
             case "approval":
               return (
-                <div key={b.id} className="approval-card">
-                  <span className="approval-head">
-                    Approval {b.status}
-                    {b.tool ? ` · ${friendlyTool(b.tool)}` : ""}
-                  </span>
-                  <pre>{capped(b.summary)}</pre>
-                  <div className="approval-hint">
-                    Read-only: headless turns resolve approvals per policy and auto-cancel questions.
-                    For interactive prompts, start a separate conversation in Terminal mode.
-                  </div>
-                </div>
+                <PermissionRecord key={b.id} status={b.status} tool={b.tool} details={b.summary} />
               );
           }
         })}
-        {running && (
+        <InteractionPanel snapshot={interactions} canRespond={ready && !applying} onRefresh={() => refreshInteractions.current()} onRespond={async decision => {
+          const nativeId = nativeIdRef.current;
+          if (!nativeId) throw new Error('Conversation is still starting.');
+          const next = await invoke<InteractionSnapshot>('agent_respond', { id: nativeId, decision });
+          if (nativeId === nativeIdRef.current) setInteractions(previous => mergeInteractionResponse(previous, next));
+        }} />
+        {!terminalOwnsConversation && ready && !running && blocks.length > 0 && provider !== 'codex' && onContinueInTerminal && <div className="notice"><button type="button" className="workspace-btn" disabled={applying || queue.items.length > 0} onClick={onContinueInTerminal}><Icon name="terminal" size={14}/>Continue this conversation in terminal</button><span>Answer native prompts on this desktop. The saved conversation continues; this transcript remains.</span></div>}
+        {running && !interactions.requests.some(request => interactions.active && ['pending', 'submitting'].includes(request.status)) && (
           <div className="chat-running" role="status">
             <span className="thinking-dots" aria-hidden="true"><i /><i /><i /></span>
             {providerProgress?.phase === 'retrying' ? <ProviderWait progress={providerProgress} provider={provider}/> : <>
@@ -973,7 +1048,34 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
       {workspaceError && <div className="notice error" role="alert">{workspaceError}</div>}
       {!yolo && workspaceNotice && <div className="notice" role="status">{workspaceNotice}</div>}
       {draftError && <div className="notice error" role="alert">Your draft could not be saved. Copy it before closing Velum Code.</div>}
+      {terminalOwnsConversation && <div className="notice" role="status">A terminal owns this conversation. Native prompts are answered there; close it before returning to chat. <button type="button" className="workspace-btn" onClick={() => void onCloseContinuedTerminal?.().then(() => setAttachedTerminal(false)).catch(error => setWorkspaceError(String(error)))}>Close terminal and return to chat</button></div>}
       <div className={`composer${running ? " is-running" : ""}${input.trim() ? " has-draft" : ""}`}>
+        {slashOpen && slashMatches.length > 0 && (
+          <div className="slash-menu" role="listbox" aria-label="Available slash commands">
+            <div className="slash-menu-head">
+              <span>Commands</span>
+              <span className="slash-hint">↑↓ navigate · ↵ select · esc close</span>
+            </div>
+            <div className="slash-menu-list">
+              {slashMatches.map((cmd: SlashCommand, idx: number) => (
+                <button
+                  key={cmd.command}
+                  type="button"
+                  role="option"
+                  aria-selected={idx === slashIdx}
+                  className={`slash-item${idx === slashIdx ? " active" : ""}`}
+                  onClick={() => applySlashCommand(cmd)}
+                  onMouseEnter={() => setSlashIdx(idx)}
+                >
+                  <span className="slash-icon"><Icon name={cmd.icon} size={14} /></span>
+                  <strong className="slash-cmd">{cmd.command}</strong>
+                  <span className="slash-label">{cmd.label}</span>
+                  <span className="slash-desc">{cmd.description}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <textarea
           maxLength={64000}
           ref={composerRef}
@@ -981,14 +1083,43 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
           rows={2}
           placeholder={ready ? running ? 'Add a message to the queue…' : `What’s on your mind? Ask ${bot?.name||providerNames[provider]}…` : "Getting ready…"}
           aria-label={`Message ${bot?.name||providerNames[provider]}`}
-          disabled={!ready || applying}
+          disabled={!ready || applying || terminalOwnsConversation}
           onChange={(e) => {
+            const val = e.target.value;
             setHistIdx(null);
-            inputRef.current = e.target.value;
-            setInput(e.target.value);
+            inputRef.current = val;
+            setInput(val);
+            if (val.startsWith("/") && !val.includes("\n")) {
+              setSlashOpen(true);
+              setSlashIdx(0);
+            } else {
+              setSlashOpen(false);
+            }
           }}
           onKeyDown={(e) => {
             if (e.nativeEvent.isComposing || e.repeat) return;
+            if (slashOpen && slashMatches.length > 0) {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setSlashIdx((i) => (i + 1) % slashMatches.length);
+                return;
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setSlashIdx((i) => (i - 1 + slashMatches.length) % slashMatches.length);
+                return;
+              }
+              if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
+                e.preventDefault();
+                applySlashCommand(slashMatches[slashIdx]);
+                return;
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setSlashOpen(false);
+                return;
+              }
+            }
             if (e.key === "Enter" && !e.shiftKey && !e.altKey && (settings.sendShortcut === "enter" || e.ctrlKey || e.metaKey)) {
               e.preventDefault();
               send();
@@ -1018,7 +1149,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
           }}
         />
         <div className="composer-actions">
-        <button type="button" className={yolo ? "yolo-btn on" : "yolo-btn"} disabled={!ready || running || queue.items.length > 0 || permissionBusy} onClick={async () => {
+        <button type="button" className={yolo ? "yolo-btn on" : "yolo-btn"} disabled={!ready || running || queue.items.length > 0 || permissionBusy || terminalOwnsConversation} onClick={async () => {
           if (!nativeIdRef.current) return;
           setPermissionBusy(true);
           try { await invoke('agent_set_permissions', {id:nativeIdRef.current,yolo:!yolo}); setYolo(!yolo); }
@@ -1027,7 +1158,44 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
         }} aria-pressed={yolo} aria-label="YOLO mode" title={yolo ? "YOLO is on: turns skip approvals and sandboxing" : "Turn on YOLO: skip approvals and sandboxing"}>
           {yolo ? <YoloIcon /> : <Icon name="shield" size={16} />}<span>{yolo ? "YOLO on" : "Standard"}</span>
         </button>
-        <span className="composer-hint">{settings.sendShortcut === "ctrl-enter" ? "Ctrl / ⌘ + Enter to send" : "Shift + Enter for a new line"}</span>
+        <span className="composer-hint">
+          {input.length > 200 ? (
+            <span className={`composer-char-count${input.length > 50000 ? " near-limit" : ""}`}>
+              {input.length.toLocaleString()} chars · ~{Math.round(input.length / 4)} tokens
+            </span>
+          ) : null}
+          {settings.sendShortcut === "ctrl-enter" ? "Ctrl / ⌘ + Enter to send" : "Shift + Enter for a new line"}
+        </span>
+        <button
+          type="button"
+          className="yolo-btn"
+          aria-label="Add Git context"
+          title={effective ? "Add Git diff or status to draft" : "Choose a project first"}
+          disabled={!effective || running}
+          onClick={async () => {
+            try {
+              const state = await invoke<{ current: string; status: string }>("git_state", { workspace: effective });
+              if (!state?.current) {
+                setWorkspaceError("No Git repository in this project.");
+                return;
+              }
+              const fileDiff = await invoke<{ diff: string }>("git_file_diff", { workspace: effective, base: state.current, path: "" }).catch(() => ({ diff: "" }));
+              const addition = fileDiff.diff
+                ? `Here is the current git diff on branch \`${state.current}\`:\n\n\`\`\`diff\n${fileDiff.diff.slice(0, 8000)}\n\`\`\`\nPlease review these changes:`
+                : `[Git: repository is clean on branch ${state.current}]`;
+              const next = inputRef.current ? `${inputRef.current}\n\n${addition}` : addition;
+              if (next.length <= 64000) {
+                inputRef.current = next;
+                setInput(next);
+                composerRef.current?.focus();
+              }
+            } catch (e) {
+              setWorkspaceError(`Could not read Git state: ${String(e)}`);
+            }
+          }}
+        >
+          <Icon name="branch" size={16} />
+        </button>
         <button type="button" className="yolo-btn" aria-label="Project context and diagnostics" title="Project context and diagnostics" disabled={!effective} onClick={e => setContextSnapshot(chatSnapshot(e.currentTarget.closest('.chat-wrap'), provider, options, running, 'desktop'))}><Icon name="settings" size={16}/></button>
         {running && (
           <button type="button" className="composer-btn stop" onClick={stop} aria-label="Stop" title="Stop">
@@ -1038,7 +1206,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
             type="button"
             className="composer-btn"
             onClick={send}
-            disabled={!ready || !input.trim()}
+            disabled={!ready || !input.trim() || terminalOwnsConversation}
             aria-label={running || queue.items.length > 0 ? 'Queue message' : 'Send'}
             title={running || queue.items.length > 0 ? 'Queue message' : 'Send'}
           >

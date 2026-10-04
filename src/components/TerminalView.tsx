@@ -32,11 +32,12 @@ interface TerminalViewProps {
   /** Bump to tear down the session and spawn a fresh one. */
   sessionKey: number;
   workspace?: string;
+  resumeConversation?: boolean;
   onStatus: (sessionId: string, status: PtyStatus) => void;
   onHandles: (sessionId: string, handles: TerminalHandles | null) => void;
 }
 
-export default function TerminalView({ provider, options, sessionId, active, sessionKey, workspace, onStatus, onHandles }: TerminalViewProps) {
+export default function TerminalView({ provider, options, sessionId, active, sessionKey, workspace, resumeConversation, onStatus, onHandles }: TerminalViewProps) {
   const { settings, systemDark } = usePreferences();
   const appearanceRef = useRef({ settings, systemDark });
   appearanceRef.current = { settings, systemDark };
@@ -115,6 +116,7 @@ export default function TerminalView({ provider, options, sessionId, active, ses
           options: optionsRef.current,
           id: nativeId,
           workspace,
+          resumeTabId: resumeConversation ? sessionId : null,
           cols: Math.max(1, term.cols),
           rows: Math.max(1, term.rows),
         });
@@ -159,7 +161,7 @@ export default function TerminalView({ provider, options, sessionId, active, ses
         await invoke("pty_kill", { id: nativeId });
       }).catch(() => {});
     };
-  }, [sessionId, sessionKey, workspace, provider]);
+  }, [sessionId, sessionKey, workspace, provider, resumeConversation]);
 
   // Change the renderer in place. Appearance never restarts the native PTY or
   // discards its buffer. Unrelated settings also preserve per-tab zoom.

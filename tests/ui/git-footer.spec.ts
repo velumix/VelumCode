@@ -17,6 +17,26 @@ test("footer shows the selected conversation branch and opens the Git panel", as
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
+test("chip drops stale branches, retries transient failures and tracks folders", async ({ page }) => {
+  await boot(page);
+  const chip = page.getByRole("button", { name: /Git:/ });
+  const field = page.locator(".chat-wrap:not(.hidden)").getByLabel("Workspace directory");
+  await expect(chip).toContainText("main");
+  await page.evaluate(() => { const qa = (window as any).qa; qa.gitFlakyCalls = 0; qa.gitFlakyFailures = 2; });
+  await field.fill("C:\\flaky-project");
+  await field.press("Enter");
+  await expect(chip).toContainText("flaky-branch", { timeout: 25000 });
+  await field.fill("C:\\plain-folder");
+  await field.press("Enter");
+  await expect(chip).toHaveCount(0);
+  await field.fill("C:\\second-project");
+  await field.press("Enter");
+  await expect(chip).toContainText("feature/two");
+  await field.fill("C:\\QA");
+  await field.press("Enter");
+  await expect(chip).toContainText("main");
+});
+
 test("conversation pill names the model and follows the live state", async ({ page }) => {
   await boot(page);
   const tab = page.locator('[role="tab"]').first();

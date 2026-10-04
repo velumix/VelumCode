@@ -1,5 +1,173 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import {emptyInteractions,type InteractionDecision} from '../../src/interactions';
+import {commandApproval,featureQuestion} from './interaction-fixtures';
+
+for (const theme of ['graphite', 'daylight']) {
+  test(`${theme}: phone approval stays compact, reveals broader scopes and sends the exact response`, async ({page}) => {
+    const remote=await boot(page,true,true,'muse',false);
+    await expect(page.locator('.phone-online')).toBeVisible();
+    await page.getByRole('button',{name:'Phone settings',exact:true}).click();
+    await page.getByRole('button',{name:'Appearance & preferences',exact:true}).click();
+    await page.getByRole('button',{name:theme==='graphite'?'Graphite theme':'Daylight theme',exact:true}).click();
+    await page.getByRole('button',{name:'Done',exact:true}).click();
+    await page.getByRole('button',{name:'Phone settings',exact:true}).click();
+    remote.interactions=commandApproval();remote.sessions[0].running=true;remote.sessions[0].status='awaiting_review';remote.sessions[0].revision++;
+    await page.evaluate(()=>(window as any).remoteEvent());
+    const card=page.getByRole('region',{name:'Permission required: powershell',exact:true});
+    await expect(card).toBeVisible();
+    await expect(page.locator('.phone-working')).toHaveCount(0);
+    await expect(card.getByRole('button',{name:'Allow once',exact:true})).toBeEnabled();
+    expect((await card.boundingBox())!.height).toBeLessThan(260);
+    for (const [width,height] of [[320,568],[844,390],[390,844]]) {
+      await page.setViewportSize({width,height});
+      expect(await page.locator('.phone-transcript').evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
+      await card.getByRole('button',{name:'Allow once',exact:true}).scrollIntoViewIfNeeded();
+      await expect(card.getByRole('button',{name:'Allow once',exact:true})).toBeInViewport();
+    }
+    await page.screenshot({path:`.qa/approval-${theme}-phone.png`,animations:'disabled'});
+    await card.getByRole('button',{name:'Details',exact:true}).click();
+    await expect(card.locator('.interaction-payload')).toHaveText(remote.interactions.requests[0].details);
+    await card.getByRole('button',{name:'More options',exact:true}).click();
+    await expect(card.locator('.interaction-more')).toContainText('Saved for this workspace');
+    expect((await new AxeBuilder({page}).include('.interaction-panel').withTags(['wcag2a','wcag2aa','wcag21aa']).analyze()).violations).toEqual([]);
+    await card.getByRole('button',{name:'More options',exact:true}).click();
+    await card.getByRole('button',{name:'Allow once',exact:true}).click();
+    expect(remote.responses).toEqual([{generation:'review-turn',id:'review-command',revision:2,choice_id:'once'}]);
+    await expect(card).toContainText('Waiting for confirmation');
+  });
+}
+
+test('phone questions remain usable and view-only approvals cannot submit', async ({page}) => {
+  const remote=await boot(page,true,false,'muse',false);
+  await expect(page.locator('.phone-online')).toBeVisible();
+  remote.interactions=commandApproval();remote.sessions[0].revision++;
+  await page.evaluate(()=>(window as any).remoteEvent());
+  await expect(page.getByRole('button',{name:'Allow once',exact:true})).toBeDisabled();
+  await expect(page.locator('.interaction-panel')).toContainText('Control access is required');
+  await page.getByRole('button',{name:'Details',exact:true}).click();
+  await expect(page.locator('.interaction-payload')).toBeVisible();
+  expect(remote.responses).toEqual([]);
+  remote.interactions=featureQuestion();remote.sessions[0].revision++;
+  await page.evaluate(()=>(window as any).remoteEvent());
+  await expect(page.getByRole('button',{name:'Send answers',exact:true})).toBeDisabled();
+  await expect(page.getByRole('checkbox').first()).toBeDisabled();
+  const card=page.getByRole('region',{name:'Which details should stay visible?',exact:true});
+  await card.scrollIntoViewIfNeeded();
+  await page.screenshot({path:'.qa/approval-question-phone.png',animations:'disabled'});
+  expect((await new AxeBuilder({page}).include('.interaction-panel').withTags(['wcag2a','wcag2aa','wcag21aa']).analyze()).violations).toEqual([]);
+});
+
+test('phone questions indicate a written answer and submit only the active answer mode', async ({page}) => {
+  const remote=await boot(page,true,true,'muse',false);
+  await expect(page.locator('.phone-online')).toBeVisible();
+  remote.interactions=featureQuestion();remote.sessions[0].running=true;remote.sessions[0].revision++;
+  await page.evaluate(()=>(window as any).remoteEvent());
+  const card=page.getByRole('region',{name:'Which details should stay visible?',exact:true});
+  const send=card.getByRole('button',{name:'Send answers',exact:true});
+  await expect(send).toBeDisabled();
+  await card.getByRole('checkbox').first().check();await expect(send).toBeEnabled();
+  await card.locator('.interaction-write-answer > summary').click();
+  await card.getByLabel('Or write your answer').fill('Show the file and command.');
+  await expect(card.getByRole('checkbox').first()).not.toBeChecked();
+  await card.locator('.interaction-write-answer > summary').click();
+  await expect(card.locator('.interaction-write-answer > summary')).toHaveText('Edit your answer');
+  await card.scrollIntoViewIfNeeded();
+  await page.screenshot({path:'.qa/approval-question-phone.png',animations:'disabled'});
+  await send.click();
+  expect(remote.responses).toEqual([{generation:'review-turn',id:'question-layout',revision:2,answers:[{question_id:'details',text:'Show the file and command.'}]}]);
+});
+
+test('phone permission history is a compact expandable record', async ({page}) => {
+  const remote=await boot(page,true,true,'muse',false);
+  await expect(page.locator('.phone-online')).toBeVisible();
+  remote.entries.push({seq:4,event:{kind:'approval',tool:'powershell',status:'approved',summary:'This action was allowed from the desktop.'}});remote.sessions[0].revision++;
+  await page.evaluate(()=>(window as any).remoteEvent());
+  const record=page.locator('.phone-transcript > .interaction-record');
+  await expect(record.locator('summary')).toContainText('Allowed');
+  await expect(record.locator('pre')).toBeHidden();
+  expect((await record.boundingBox())!.height).toBeLessThan(50);
+  await record.locator('summary').click();
+  await expect(record.locator('pre')).toHaveText('This action was allowed from the desktop.');
+});
+
+test('phone recovery edits stopped work separately and retains both drafts after a rejected retry', async ({ page }) => {
+  const remote = await boot(page, true, true, 'codex', false);
+  const composer = page.getByRole('textbox', { name: 'Message your desktop agent' });
+  await composer.fill('Finish the interrupted task');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await page.getByRole('button', { name: 'Stop task', exact: true }).click();
+  await composer.fill('My separate phone draft');
+  await page.getByRole('button', { name: 'Revise request', exact: true }).click();
+  const editor = page.getByRole('textbox', { name: 'Request to retry' });
+  await expect(editor).toHaveValue('Finish the interrupted task');
+  await editor.fill('Finish the task using the existing layout');
+  remote.failSend = true;
+  await page.getByRole('button', { name: 'Retry request', exact: true }).click();
+  await expect(page.locator('.request-recovery-error')).toContainText('Desktop could not start');
+  await expect(editor).toHaveValue('Finish the task using the existing layout');
+  await expect(composer).toHaveValue('My separate phone draft');
+  for (const [width, height] of [[390, 844], [320, 568]]) {
+    await page.setViewportSize({ width, height });
+    expect(await page.locator('.phone-transcript').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  }
+  expect((await new AxeBuilder({ page }).include('.request-recovery').withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: '.qa/request-recovery-phone.png', animations: 'disabled' });
+  remote.failSend = false;
+  await page.getByRole('button', { name: 'Retry request', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Recover request' })).toHaveCount(0);
+  expect(remote.sends).toEqual(['Finish the interrupted task', 'Finish the task using the existing layout']);
+  await expect(composer).toHaveValue('My separate phone draft');
+});
+
+test('phone recovery queues a retry without resuming or replacing pending work', async ({ page }) => {
+  const remote = await boot(page, true, true, 'muse', false);
+  const composer = page.getByRole('textbox', { name: 'Message your desktop agent' });
+  await composer.fill('Original task');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await composer.fill('Existing follow-up');
+  await page.getByRole('button', { name: 'Queue message', exact: true }).click();
+  await page.getByRole('button', { name: 'Stop task', exact: true }).click();
+  await composer.fill('Keep this draft');
+  await page.getByRole('button', { name: 'Queue retry', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Message queue' })).toContainText('2 queued');
+  expect(remote.sessions[0].running).toBe(false);
+  expect(remote.sessions[0].queue.paused).toBe(true);
+  expect(remote.sessions[0].queue.items.map(item => item.prompt)).toEqual(['Existing follow-up', 'Original task']);
+  await expect(page.getByRole('button', { name: 'Queue retry', exact: true })).toHaveCount(0);
+  await expect(composer).toHaveValue('Keep this draft');
+});
+
+test('phone recovery follows the failed turn and is unavailable to view-only devices', async ({ page }) => {
+  const remote = await boot(page, true, false, 'antigravity', false);
+  remote.entries.push({ seq: 4, event: { kind: 'turn_start', prompt: 'Blocked desktop work' } }, { seq: 5, event: { kind: 'turn_end', status: 'blocked', reason: 'Command permission required' } });
+  remote.sessions[0].status = 'blocked'; remote.sessions[0].revision = 5;
+  await page.evaluate(() => (window as any).remoteEvent());
+  await expect(page.locator('.phone-notice')).toContainText('Command permission required');
+  await expect(page.getByRole('region', { name: 'Recover request' })).toHaveCount(0);
+  expect(remote.sends).toEqual([]);
+});
+
+test('phone recovery keeps an oversized desktop request intact and requires shortening it before retry', async ({ page }) => {
+  const remote = await boot(page, true, true, 'muse', false);
+  const original = 'Detailed project requirement. '.repeat(600);
+  remote.entries.push({ seq: 4, event: { kind: 'turn_start', prompt: original } }, { seq: 5, event: { kind: 'turn_end', status: 'failed', reason: 'Desktop response failed.' } });
+  remote.sessions[0].status = 'failed'; remote.sessions[0].revision = 5;
+  await page.evaluate(() => (window as any).remoteEvent());
+  const recovery = page.getByRole('region', { name: 'Recover request' });
+  await expect(recovery).toContainText('Revise it to 16,000 characters or fewer');
+  await expect(page.getByRole('button', { name: 'Retry request', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Revise request', exact: true }).click();
+  const editor = page.getByRole('textbox', { name: 'Request to retry' });
+  await expect(editor).toHaveValue(original);
+  await expect(editor).toHaveAttribute('maxlength', '16000');
+  expect(remote.sends).toEqual([]);
+  await editor.fill('Continue with the existing project requirements.');
+  await page.getByRole('button', { name: 'Retry request', exact: true }).click();
+  await expect(recovery).toHaveCount(0);
+  expect(remote.sends).toEqual(['Continue with the existing project requirements.']);
+});
 
 test('phone corrections keep drafts and save reviewed project guidance',async({page})=>{
   const remote=await boot(page,true,true,'codex',false);
@@ -89,6 +257,7 @@ test('phone replays the original Muse retry deadline and clears it after recover
 
 async function boot(page: Page, paired = true, control = true, provider = "muse", configure = true) {
   const remote = {
+    interactions: emptyInteractions(), responses: [] as InteractionDecision[],
     paired, control, pending: false, failSend: false, failMemorySave: false, revoked: false, sends: [] as string[],
     memory: {root:"C:\\Vault",settings:{enabled:true,capture:"review",budget_bytes:3000},notes:[] as any[],warning:null},
     board: {revision:0,cards:[] as any[],trash:[] as any[]},
@@ -189,7 +358,13 @@ async function boot(page: Page, paired = true, control = true, provider = "muse"
       publishQueue();nextQueued();return answer(q);
     }
     if (url.pathname === "/api/logout") { remote.revoked = true; return answer({ ok: true }); }
-    if (url.pathname === "/api/sessions/session-one") return answer({ session: remote.sessions[0], events: remote.entries.filter((e) => e.seq > Number(url.searchParams.get("after") || 0)), truncated: false });
+    if (url.pathname === '/api/sessions/session-one/respond') {
+      if (!control) return answer({error:'View only'},403);
+      remote.responses.push(body);
+      remote.interactions={...remote.interactions,revision:remote.interactions.revision+1,requests:remote.interactions.requests.map(request=>request.id===body.id?{...request,status:'submitting',source:'phone'}:request)};
+      return answer(remote.interactions);
+    }
+    if (url.pathname === "/api/sessions/session-one") return answer({ session: remote.sessions[0], events: remote.entries.filter((e) => e.seq > Number(url.searchParams.get("after") || 0)), truncated: false, interactions:remote.interactions });
     if (url.pathname === "/api/sessions/bot-conversation") return answer({session:remote.sessions.find(s=>s.id==='bot-conversation'),events:[],truncated:false});
     return answer({ error: "Not found" }, 404);
   });

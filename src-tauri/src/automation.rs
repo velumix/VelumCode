@@ -19,6 +19,15 @@ use tauri::{Emitter, Manager};
 pub fn now() -> u64 {
     Utc::now().timestamp().max(0) as u64
 }
+fn execution_limit_reached(
+    now: u64,
+    started: u64,
+    waited: u64,
+    waiting: bool,
+    max_minutes: u32,
+) -> bool {
+    !waiting && now.saturating_sub(started).saturating_sub(waited) > u64::from(max_minutes) * 60
+}
 pub fn next_due(expression: &str, timezone: &str, after: u64) -> Result<u64, String> {
     if expression.len() > 100 || expression.split_whitespace().count() != 5 {
         return Err("Use five cron fields: minute hour day month weekday.".into());
@@ -425,6 +434,23 @@ fn tick(app: &tauri::AppHandle) -> Result<(), String> {
     }
     let snapshot = app.state::<Store>().view().snapshot;
     if let Some(run) = snapshot.runs.iter().find(|r| r.status == "running") {
+        let (waiting, waited) = app
+            .state::<crate::runner::AgentState>()
+            .review_wait(&run.session_id);
+        const WAITING: &str = "Waiting for your response. Open this run in Bots > Activity, or its session on a phone with control access.";
+        if (waiting && run.detail.is_empty()) || (!waiting && run.detail == WAITING) {
+            app.state::<Store>().edit(|snapshot| {
+                if let Some(current) = snapshot.runs.iter_mut().find(|r| r.id == run.id) {
+                    current.detail = if waiting {
+                        WAITING.into()
+                    } else {
+                        String::new()
+                    };
+                }
+                Ok(())
+            })?;
+            changed(app);
+        }
         let current = (|| {
             let bot = app.state::<bots::Store>().get(&run.bot_id)?;
             if !bot.enabled {
@@ -454,7 +480,7 @@ fn tick(app: &tauri::AppHandle) -> Result<(), String> {
             if !kanban::blockers(&board, card).is_empty() {
                 return Err("A prerequisite is no longer complete. Review the task dependencies before continuing.".into());
             }
-            if now().saturating_sub(run.started_at) > u64::from(run.max_minutes) * 60 {
+            if execution_limit_reached(now(), run.started_at, waited, waiting, run.max_minutes) {
                 return Err("The run reached its time limit.".into());
             }
             Ok::<(), String>(())
@@ -713,7 +739,10 @@ pub fn finish(
     else {
         return Ok(());
     };
-    let detail = detail.or_else(|| (!run.detail.is_empty()).then_some(run.detail.clone()));
+    let detail = detail.or_else(|| {
+        (!run.detail.is_empty() && !run.detail.starts_with("Waiting for your response."))
+            .then_some(run.detail.clone())
+    });
     // Cleanup is independent of board/storage errors: completed background sessions
     // must not remain registered or fill the interactive conversation history.
     let _ = crate::runner::agent_destroy(
@@ -921,6 +950,13 @@ pub async fn automation_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn permission_wait_does_not_consume_scheduled_execution_time() {
+        assert!(!execution_limit_reached(100_000, 100, 0, true, 1));
+        assert!(!execution_limit_reached(3_760, 100, 3_600, false, 1));
+        assert!(execution_limit_reached(3_761, 100, 3_600, false, 1));
+        assert!(!execution_limit_reached(50, 100, 3_600, false, 1));
+    }
     fn temp() -> PathBuf {
         let root =
             std::env::temp_dir().join(format!("velum-schedule-test-{}", uuid::Uuid::new_v4()));

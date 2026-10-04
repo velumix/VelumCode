@@ -223,7 +223,9 @@ impl Stream {
                         )
                     })
                     .flatten();
-                    let status = if shell_error
+                    let status = if item["status"] == "declined" {
+                        "blocked"
+                    } else if shell_error
                         .is_some_and(|(s, _, _)| s == crate::workspace_access::Status::Blocked)
                     {
                         "blocked"

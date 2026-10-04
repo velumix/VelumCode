@@ -15,7 +15,10 @@ import { usePreferences } from "../preferences";
 import MessageQueue from '../components/MessageQueue';
 import AgentActivity from '../components/AgentActivity';
 import CorrectionComposer from '../components/CorrectionComposer';
-import { correctionPrompt, groupActivity, lastMatch, lessonTitle } from '../conversationUX';
+import RequestRecovery from '../components/RequestRecovery';
+import InteractionPanel, { PermissionRecord } from '../components/InteractionPanel';
+import { emptyInteractions, mergeInteractionResponse, type InteractionSnapshot } from '../interactions';
+import { correctionPrompt, friendlyTool, groupActivity, lastMatch, latestRecovery, lessonTitle } from '../conversationUX';
 const SettingsPanel = lazy(() => import("../components/SettingsPanel"));
 
 import ModelControls from "../components/ModelControls";
@@ -34,7 +37,7 @@ function PhoneTool({ block }: { block: Block }) {
   const [override, setOverride] = useState<boolean | null>(null);
   const open = override ?? settings.toolOutput === "expanded";
   const text = block.text || "Waiting for output…";
-  return <div className="phone-tool"><button type="button" className="phone-tool-head" aria-expanded={open} onClick={() => setOverride(!open)}><Icon name="code" size={15} /><strong>{block.name}</strong><span>{block.status}</span><Icon name="down" size={14}/></button>{(open || settings.toolOutput !== "collapsed") && <pre>{open ? text : text.split("\n").slice(0, 3).join("\n")}</pre>}</div>;
+  return <div className="phone-tool"><button type="button" className="phone-tool-head" aria-expanded={open} onClick={() => setOverride(!open)}><Icon name="code" size={15} /><strong>{friendlyTool(block.name || "tool")}</strong><span>{block.status}</span><Icon name="down" size={14}/></button>{(open || settings.toolOutput !== "collapsed") && <pre>{open ? text : text.split("\n").slice(0, 3).join("\n")}</pre>}</div>;
 }
 class ApiError extends Error { constructor(message: string, public status: number) { super(message); } }
 
@@ -99,6 +102,7 @@ export default function RemoteApp() {
   const current = sessions.find((s) => s.id === selected);
   const view = useMemo(() => transcript(replay?.events || []), [replay]);
   const lastAssistant = lastMatch(view.blocks,block=>block.kind==='assistant');
+  const recoveryNotice = latestRecovery(view.blocks);
   async function rememberLesson(lesson: string) {
     if (!current || !device?.control || !connected) throw new Error('Reconnect with control access before saving guidance.');
     const botPath = current.bot ? `bots/${encodeURIComponent(current.bot.id)}/` : '';
@@ -299,7 +303,7 @@ export default function RemoteApp() {
     }} /></div></details>}
     {!connected && <div className="phone-reconnect" role="status">{usb ? "Check your USB cable and keep your desktop awake." : "Reconnect Tailscale and keep your desktop awake."} Your draft is safe.<button onClick={() => void refreshRef.current()}>Retry</button></div>}
     <div className="phone-transcript" ref={scroll} onScroll={() => { const el = scroll.current; if (el) { follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; setLatest(!follow.current); } }}>
-      {!sessions.length ? <div className="phone-empty"><Icon name="chat" size={32} /><h2>No conversations yet</h2><p>Open an Agent conversation on your desktop. It will appear here automatically.</p></div> : !view.blocks.length ? <div className="phone-empty"><VelumMark size={64} /><h2>What’s next?</h2><p>Send a message to your desktop agent. Your files and tools stay on your computer.</p></div> : null}
+      {!sessions.length ? <div className="phone-empty"><Icon name="chat" size={32} /><h2>No conversations yet</h2><p>Open an Agent conversation on your desktop. It will appear here automatically.</p></div> : !view.blocks.length && !replay?.interactions?.requests.length ? <div className="phone-empty"><VelumMark size={64} /><h2>What’s next?</h2><p>Send a message to your desktop agent. Your files and tools stay on your computer.</p></div> : null}
       {replay?.truncated && <p className="phone-history-note">Showing recent activity. Earlier messages remain in the desktop conversation.</p>}
       {groupActivity(view.blocks,settings.groupActivity).map(row=>{
         if(row.kind==='activity_group'){
@@ -307,7 +311,22 @@ export default function RemoteApp() {
           return <AgentActivity key={`activity-${row.id}`} count={row.items.length} current={currentTool?.name || 'Working'} busy={!!currentTool} stopped={row.items.some(tool=>tool.status==='cancelled')} failed={row.items.some(tool=>['failed','blocked','rejected'].includes(tool.status || ''))}>{row.items.map(tool=><PhoneTool key={tool.id} block={tool}/>)}</AgentActivity>;
         }
         const block=row.block;
-        return block.kind==='tool'?<PhoneTool block={block} key={block.id}/>:block.kind==='notice'?<div className="phone-notice" key={block.id}>{block.text}</div>:<article className={`phone-message ${block.kind}`} key={block.id}><div className="phone-message-label">{block.kind === "user" ? "You" : <>{current?.bot?<BotAvatar bot={current.bot} size={24}/>:<VelumMark size={20}/>}<span>{current?.bot?.name||providerNames[current?.provider || "muse"]}</span></>}</div>{block.kind === "user" ? <p>{block.text}</p> : <Markdown text={block.text} />}{device.control&&<button type="button" className="phone-remember" aria-label="Remember this message" disabled={!connected||!!current?.running} onClick={()=>{setMemorySeed(block.text);setMemorySession(selected);}}><Icon name="memory" size={14}/>Remember</button>}
+        return block.kind==='approval'?<PermissionRecord key={block.id} status={block.status || 'resolved'} tool={block.name} details={block.text}/>:block.kind==='tool'?<PhoneTool block={block} key={block.id}/>:block.kind==='notice'?<div className="phone-notice" key={`${selected}-${block.id}`}><span>{block.text}</span>
+          {block.recovery && recoveryNotice?.id === block.id && device.control && current && !current.running && replay?.session.id === selected && <RequestRecovery
+            request={block.recovery} disabled={!connected || busy} maxLength={16000}
+            queued={!!(current.queue || view.queue).items.length || (current.queue || view.queue).paused} paused={(current.queue || view.queue).paused}
+            submit={async prompt => {
+              if (!connected || busy || !device.control || current.running) return false;
+              const target = selected;
+              setBusy(true); setError(''); follow.current = true;
+              try {
+                await api(`/sessions/${encodeURIComponent(target)}/send`, { prompt });
+                await refreshRef.current();
+                return true;
+              } finally { setBusy(false); }
+            }}
+          />}
+        </div>:<article className={`phone-message ${block.kind}`} key={block.id}><div className="phone-message-label">{block.kind === "user" ? "You" : <>{current?.bot?<BotAvatar bot={current.bot} size={24}/>:<VelumMark size={20}/>}<span>{current?.bot?.name||providerNames[current?.provider || "muse"]}</span></>}</div>{block.kind === "user" ? <p>{block.text}</p> : <Markdown text={block.text} />}{device.control&&<button type="button" className="phone-remember" aria-label="Remember this message" disabled={!connected||!!current?.running} onClick={()=>{setMemorySeed(block.text);setMemorySession(selected);}}><Icon name="memory" size={14}/>Remember</button>}
           {block.kind==='assistant' && device.control && (!current?.running || block.id!==lastAssistant?.id) && <div className="response-actions"><button type="button" disabled={!connected} onClick={()=>setCorrection({session:selected,id:block.id,answer:block.text})}><Icon name="edit" size={14}/>Correct response</button></div>}
           {correction?.session===selected && correction.id===block.id && <CorrectionComposer running={!!current?.running} disabled={!connected || !device.control || busy} owner={current?.bot?.name} onClose={()=>setCorrection(null)} remember={rememberLesson} submit={async(text,lesson)=>{
             if(!connected || !device.control || busy) throw new Error('Reconnect before sending this correction.');
@@ -319,8 +338,23 @@ export default function RemoteApp() {
             return {sent:true,remembered:!!lesson,notice};
           }}/>}</article>;
       })}
+      {replay?.session.id === selected && <InteractionPanel
+        snapshot={replay.interactions || emptyInteractions()}
+        canRespond={!!device.control && connected}
+        disabledReason={connected ? 'Control access is required to answer this request.' : 'Reconnect to your desktop to answer this request.'}
+        onRefresh={() => refreshRef.current()}
+        onRespond={async decision => {
+          if (!device.control || !connected) throw new Error('Reconnect with control access before responding.');
+          const target = selected;
+          const next = await api<InteractionSnapshot>(`/sessions/${encodeURIComponent(target)}/respond`, decision);
+          const previous = cache.current.get(target);
+          if (previous?.interactions) cache.current.set(target, { ...previous, interactions: mergeInteractionResponse(previous.interactions, next) });
+          setReplay(previous => previous?.session.id === target && previous.interactions ? { ...previous, interactions: mergeInteractionResponse(previous.interactions, next) } : previous);
+          await refreshRef.current();
+        }}
+      />}
       {view.todos.length > 0 && <details className="phone-todos"><summary>Task checklist <span>{view.todos.filter((todo) => todo.status === "completed").length}/{view.todos.length}</span></summary>{view.todos.map((todo, index) => <p key={index}><Icon name={todo.status === "completed" ? "check" : "code"} size={14} />{todo.text}</p>)}</details>}
-      {current?.running && <div className="phone-working" role="status"><span className="phone-pulse" />{view.providerProgress?.phase === 'retrying' ? <ProviderWait progress={view.providerProgress} provider={current.provider || 'muse'}/> : view.activity || `${current?.bot?.name||providerNames[current?.provider || "muse"]} is working…`}</div>}
+      {current?.running && !(replay?.session.id === selected && replay.interactions?.active && replay.interactions.requests.some(request => ['pending', 'submitting'].includes(request.status))) && <div className="phone-working" role="status"><span className="phone-pulse" />{current.status === 'awaiting_review' ? 'Waiting for your response…' : view.providerProgress?.phase === 'retrying' ? <ProviderWait progress={view.providerProgress} provider={current.provider || 'muse'}/> : view.activity || `${current?.bot?.name||providerNames[current?.provider || "muse"]} is working…`}</div>}
     </div>
     {latest && !correction && <button className="phone-latest" onClick={() => { follow.current = true; if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; setLatest(false); }}>Latest activity <Icon name="down" size={15} /></button>}
     <footer className="phone-composer">

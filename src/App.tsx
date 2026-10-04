@@ -9,6 +9,7 @@ import SearchBar from "./components/SearchBar";
 const TerminalView = lazy(() => import("./components/TerminalView"));
 import type { PtyStatus, TerminalHandles } from "./components/TerminalView";
 import ChatView from "./components/ChatView";
+import DesktopInteractions from "./components/DesktopInteractions";
 import GitChip from "./components/GitChip";
 import type { AgentStatus } from "./components/ChatView";
 import CommandPalette from "./components/CommandPalette";
@@ -52,6 +53,7 @@ interface Tab {
   agentKey: number;
   terminalKey: number;
   terminalStarted: boolean;
+  terminalResume?: boolean;
   workspace?: string;
 }
 
@@ -85,7 +87,7 @@ function statusText(tab: Tab): string {
       return "\u2713 Done";
     case "running":
       if ("backend" in status) return `${providerNames[tab.provider]} · ${status.backend}`;
-      return "detail" in status && status.detail ? `Working… · ${status.detail}` : "Working…";
+      return "detail" in status && status.detail ? status.detail : "Working…";
     case "exited":
       return status.code === null ? `${providerNames[tab.provider]} exited` : `${providerNames[tab.provider]} exited (code ${status.code})`;
     case "error":
@@ -114,6 +116,7 @@ export default function App() {
   const [guidanceReviewCount, setGuidanceReviewCount] = useState(0);
   const [boardWorkspace, setBoardWorkspace] = useState<string | null>(null);
   const [gitWorkspace, setGitWorkspace] = useState<string | null>(null);
+  const [gitTick, setGitTick] = useState(0);
   const [desktop, setDesktop] = useState<DesktopStatus>({ notifications_enabled: true, last_error: null });
   const [desktopMessage, setDesktopMessage] = useState<{ text: string; error: boolean } | null>(() => recoveryError ? { text: recoveryError, error: true } : null);
   useEffect(() => {
@@ -570,6 +573,15 @@ export default function App() {
               onStatus={handleAgentStatus}
               onWorkspace={handleWorkspace}
               onTitle={handleTitle}
+              terminalOwnsConversation={!!t.terminalResume && t.terminalStarted && ['starting', 'running'].includes(t.terminalStatus.kind)}
+              onContinueInTerminal={() => {
+                if (t.terminalStarted && !t.terminalResume && ['starting','running'].includes(t.terminalStatus.kind)) { setDesktopMessage({text:'Exit the separate terminal before continuing this saved conversation there.',error:true}); return; }
+                setTabs(previous => previous.map(tab => tab.id === t.id ? {...tab, mode:'terminal', terminalStarted:true, terminalResume:true, terminalKey:tab.terminalKey + 1, terminalStatus:{kind:'starting'}} : tab));
+              }}
+              onCloseContinuedTerminal={async () => {
+                await invoke('pty_close_continuation', {tabId:t.id});
+                setTabs(previous => previous.map(tab => tab.id === t.id ? {...tab, mode:'agent', terminalStarted:false, terminalResume:false, terminalStatus:{kind:'exited', code:null}} : tab));
+              }}
             />
             {t.terminalStarted && <Suspense fallback={t.id === activeTab?.id && t.mode === "terminal" ? <p>Loading terminal…</p> : null}>
             <TerminalView
@@ -579,6 +591,7 @@ export default function App() {
               active={t.id === activeTab?.id && t.mode === "terminal"}
               sessionKey={t.terminalKey}
               workspace={t.workspace}
+              resumeConversation={t.terminalResume}
               onStatus={handleTerminalStatus}
               onHandles={handleHandles}
             />
@@ -596,7 +609,7 @@ export default function App() {
             <span className="status-text" title={statusText(activeTab)}>
               {statusText(activeTab)}
             </span>
-            {activeTab.workspace && <GitChip workspace={activeTab.workspace} signal={`${activeTab.id}:${tabStatus(activeTab).kind}`} onOpen={() => { if (activeTab.workspace) setGitWorkspace(activeTab.workspace); }} />}
+            {activeTab.workspace && <GitChip workspace={activeTab.workspace} signal={`${activeTab.id}:${tabStatus(activeTab).kind}:${gitTick}`} onOpen={() => { if (activeTab.workspace) setGitWorkspace(activeTab.workspace); }} />}
           </>
         )}
         <span className="status-spacer" />
@@ -611,10 +624,10 @@ export default function App() {
       {settingsOpen && <Suspense fallback={null}><SettingsPanel initialPage={settingsPage} updates={updates} onClose={() => { setSettingsOpen(false); setSettingsPage("appearance"); }} notifications={{ enabled: desktop.notifications_enabled, toggle: toggleNotifications, test: testNotification }} /></Suspense>}
       {remoteOpen && <Suspense fallback={null}><RemotePanel onClose={() => setRemoteOpen(false)} /></Suspense>}
       {boardWorkspace && <Suspense fallback={null}><KanbanPanel workspace={boardWorkspace} bots={bots} previewSchedule={(cron,timezone)=>invoke('automation_request',{request:{action:'preview',cron,timezone}})} request={request=>invoke<Board>("kanban_request",{workspace:boardWorkspace,request})} onClose={()=>setBoardWorkspace(null)} onWork={workOnCard}/></Suspense>}
-      {gitWorkspace && <Suspense fallback={null}><GitPanel workspace={gitWorkspace} onClose={()=>setGitWorkspace(null)} /></Suspense>}
+      {gitWorkspace && <Suspense fallback={null}><GitPanel workspace={gitWorkspace} onClose={()=>{setGitWorkspace(null);setGitTick((t)=>t+1);}} /></Suspense>}
       {pluginPanel && <Suspense fallback={null}><PluginPanel plugins={plugins} selection={pluginPanel.selection} onClose={() => setPluginPanel(null)} onRefresh={refreshPlugins} workspace={activeTab?.workspace || ""} messages={() => pluginHandles.current.get(activeTab?.id)?.messages() || []} onInsert={text => { pluginHandles.current.get(activeTab?.id)?.insert(text); focusComposer(); }} /></Suspense>}
       {memory&&<Suspense fallback={null}><MemoryPanel initialFilter={memory.initialFilter} ownerName={bots.find(b=>b.id===memory.bot_id)?.name} seed={memory.seed} onClose={()=>setMemory(null)} request={(request)=>invoke<MemoryView>(memory.bot_id?'bots_memory':'memory_request',{workspace:memory.workspace,request,id:memory.bot_id})} openVault={()=>memory.bot_id?invoke('bots_open',{id:memory.bot_id,memory:true}):invoke("memory_open")}/></Suspense>}
-      {botPanel&&<Suspense fallback={null}><BotsPanel initialPage={botPanel==='activity'?'activity':'profiles'} openMemory={id=>invoke('bots_open',{id,memory:true})} workspace={activeTab?.workspace||''} provider={activeTab?.provider||'muse'} options={activeTab?.options||{model:'',reasoning:''}} request={request=>invoke<BotView>('bots_request',{request})} automation={request=>invoke('automation_request',{request})} memory={(id,request)=>invoke<MemoryView>('bots_memory',{id,workspace:activeTab?.workspace||'',request})} loadModels={(provider,refresh)=>invoke<ModelCatalog>('provider_models',{provider,refresh})} openFolder={id=>invoke('bots_open',{id})} onClose={()=>setBotPanel(null)} chatLabel={botPanel==='handoff'?'Hand off':'Chat'} onChat={openBot} onChange={()=>void refreshBots()}/></Suspense>}
+      {botPanel&&<Suspense fallback={null}><BotsPanel renderInteractions={id => <DesktopInteractions key={id} sessionId={id}/>} initialPage={botPanel==='activity'?'activity':'profiles'} openMemory={id=>invoke('bots_open',{id,memory:true})} workspace={activeTab?.workspace||''} provider={activeTab?.provider||'muse'} options={activeTab?.options||{model:'',reasoning:''}} request={request=>invoke<BotView>('bots_request',{request})} automation={request=>invoke('automation_request',{request})} memory={(id,request)=>invoke<MemoryView>('bots_memory',{id,workspace:activeTab?.workspace||'',request})} loadModels={(provider,refresh)=>invoke<ModelCatalog>('provider_models',{provider,refresh})} openFolder={id=>invoke('bots_open',{id})} onClose={()=>setBotPanel(null)} chatLabel={botPanel==='handoff'?'Hand off':'Chat'} onChat={openBot} onChange={()=>void refreshBots()}/></Suspense>}
     </div>
   );
 }

@@ -13,6 +13,7 @@
     "check": "npm run build && npm test && npm run test:sdk && npm run test:rust",
     "check:extensions": "cargo build --manifest-path src-tauri/Cargo.toml && node scripts/extensions-smoke.mjs",
     "check:native": "cargo build --manifest-path src-tauri/Cargo.toml && node scripts/native-smoke.mjs",
+    "check:permissions": "npm run build && cargo build --manifest-path src-tauri/Cargo.toml && node scripts/permissions-smoke.mjs",
     "check:tools": "cargo build --manifest-path src-tauri/Cargo.toml && node scripts/agent-tools-smoke.mjs",
     "check:tools:native": "cargo build --manifest-path src-tauri/Cargo.toml && node scripts/agent-tools-smoke.mjs --native",
     "check:provider-mcp": "node scripts/provider-mcp-config-smoke.mjs",

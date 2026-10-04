@@ -1,9 +1,12 @@
 import type { CSSProperties } from "react";
 import velumMark from "../assets/velum-mark.png";
 
-export type IconName = "board" | "search" | "plus" | "chat" | "folder" | "code" | "branch" | "terminal" | "arrow" | "down" | "reset" | "command" | "check" | "copy" | "close" | "shield" | "bell" | "phone" | "memory" | "settings" | "edit";
+export type IconName = "board" | "search" | "plus" | "chat" | "folder" | "code" | "branch" | "terminal" | "arrow" | "down" | "chevron" | "reset" | "command" | "check" | "copy" | "close" | "shield" | "bell" | "phone" | "memory" | "settings" | "edit" | "bug" | "sparkles";
 
 const paths: Record<IconName, string> = {
+  bug: "M19 13h-4m4-4h-4M5 13h4M5 9h4m6 1v4a4 4 0 0 1-8 0v-4a4 4 0 0 1 8 0Zm-6-4 1.5 2h5L17 6",
+  sparkles: "m12 3 1.9 4.1L18 9l-4.1 1.9L12 15l-1.9-4.1L6 9l4.1-1.9L12 3Z",
+  chevron: "m6 9 6 6 6-6",
   edit: "m16 3 5 5L9 20l-6 1 1-6L16 3Zm-2 2 5 5",
   board: "M3 4h18v16H3V4Zm6 0v16m6-16v16M5 8h2m4 0h2m4 0h2M5 12h2m6 0h-2",
   memory: "M4 4h6a3 3 0 0 1 3 3v14a4 4 0 0 0-4-2H4V4Zm16 0h-4a3 3 0 0 0-3 3v14a4 4 0 0 1 4-2h3V4Z",

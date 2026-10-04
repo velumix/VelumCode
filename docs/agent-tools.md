@@ -16,6 +16,9 @@ YOLO does not enable desktop screenshots or native input.
 | `delete_file` | Permanently removes one regular file after checking all 64 hexadecimal characters of `inspect_file.sha256`, copied unchanged. Shortened hashes are rejected. Rejects directories, parent traversal, links/redirecting reparse points, alternate streams and Git metadata. A changed file must be inspected again. |
 | `workspace_search` | Literal text or filename search, with up to 50 results per page. Follow `next_cursor` until null. Cursors belong to this turn. |
 | `git_status` | Reads the selected project's status with `safe.directory` for the detected repository in this command only; it does not edit global Git configuration or ownership. |
+| `git_branches` | Lists local branches with upstream tracking for the selected project; same per-command `safe.directory` confinement, no writes. |
+| `git_diff` | Reads the working-tree diff against a branch or revision (empty means HEAD), optionally for one repository-relative file; same confinement, no writes. |
+| `git_log` | Reads recent commits, newest first (optional `limit` 1–50, default 20); same confinement, no writes. |
 | `vault_search` | Searches enabled active shared/project notes and the current bot's private vault. Other projects/bots and pending/archived notes are excluded. Follow `next_offset`. Excerpts can be shorter than a whole note. |
 | `turn_diagnostics` | Host clock, current provider token counters when available, their source, and observed MCP connections/calls. No tokenizer or browser timing is invented. |
 | `browser_open`, `browser_snapshot`, `browser_action`, `browser_screenshot` | An isolated headless Edge/Chrome preview with navigation, semantic snapshots, CSS actions, page evaluation and PNG capture. Requires installed Edge/Chrome and Node.js 22 or newer. |

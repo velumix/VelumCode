@@ -123,49 +123,36 @@ pub fn exec_command(
     };
     match provider {
         Provider::Muse => {
-            cmd.args(["exec", "--json"]);
-            cmd.args(options.args(provider));
-            if yolo {
-                cmd.arg("--yolo");
+            cmd.arg("serve");
+            if !options.model.is_empty() {
+                cmd.arg("--model").arg(&options.model);
             }
-            cmd.arg("--session-id")
-                .arg(session)
-                .arg("--workspace")
-                .arg(workspace)
-                .arg("--prompt-file")
-                .arg(prompt)
-                .arg("--user-input-auto-resolve")
-                .stdin(Stdio::null());
+            if yolo {
+                cmd.args(["--disable-sandbox", "--trust-workspace"]);
+            }
+            // Prompts, approval policy and decisions travel over the owned MSP
+            // connection; closing stdin would end the host before a reply.
+            cmd.stdin(Stdio::piped());
         }
         Provider::Codex => {
-            cmd.args([
-                "-c",
-                "approval_policy=\"never\"",
-                "-c",
-                "sandbox_mode=\"workspace-write\"",
-            ]);
-            // Explicitly bind fresh and resumed turns to the selected project.
-            // Do not add the user's home or inherit a previous session's roots.
-            cmd.arg("-C").arg(workspace);
+            cmd.args(["app-server", "--listen", "stdio://"]);
+            cmd.arg("-c").arg(if yolo {
+                "approval_policy=\"never\""
+            } else {
+                "approval_policy=\"on-request\""
+            });
+            cmd.args(["-c", "approvals_reviewer=\"user\""]);
+            cmd.arg("-c").arg(if yolo {
+                "sandbox_mode=\"danger-full-access\""
+            } else {
+                "sandbox_mode=\"workspace-write\""
+            });
             cmd.arg("-c").arg(format!(
                 "sandbox_workspace_write.writable_roots={}",
                 serde_json::to_string(&[workspace.display().to_string()])
                     .map_err(|e| e.to_string())?
             ));
-            cmd.arg("exec");
-            if !session.is_empty() {
-                cmd.arg("resume");
-            }
-            cmd.args(["--json", "--skip-git-repo-check"]);
-            cmd.args(options.args(provider));
-            if yolo {
-                cmd.arg("--dangerously-bypass-approvals-and-sandbox");
-            }
-            if !session.is_empty() {
-                cmd.arg(session);
-            }
-            cmd.arg("-")
-                .stdin(std::fs::File::open(prompt).map_err(|e| e.to_string())?);
+            cmd.stdin(Stdio::piped());
         }
         Provider::Antigravity => {
             cmd.args([
@@ -236,10 +223,7 @@ mod tests {
                     .map(|a| a.to_string_lossy().into_owned())
                     .collect();
                 assert_eq!(command.get_current_dir(), Some(workspace));
-                assert_eq!(
-                    args[args.iter().position(|a| a == "-C").unwrap() + 1],
-                    workspace.display().to_string()
-                );
+                assert_eq!(args.first().map(String::as_str), Some("app-server"));
                 let roots = args
                     .iter()
                     .find_map(|a| a.strip_prefix("sandbox_workspace_write.writable_roots="))
@@ -248,12 +232,16 @@ mod tests {
                     serde_json::from_str::<Vec<String>>(roots).unwrap(),
                     [workspace.display().to_string()]
                 );
-                assert!(args.contains(&"sandbox_mode=\"workspace-write\"".into()));
-                assert_eq!(
-                    args.contains(&"--dangerously-bypass-approvals-and-sandbox".into()),
-                    yolo
-                );
-                assert_eq!(args.contains(&"resume".into()), !resume.is_empty());
+                assert!(args.contains(
+                    &if yolo {
+                        "sandbox_mode=\"danger-full-access\""
+                    } else {
+                        "sandbox_mode=\"workspace-write\""
+                    }
+                    .into()
+                ));
+                assert_eq!(args.contains(&"approval_policy=\"never\"".into()), yolo);
+                assert!(!args.contains(&"exec".into()) && !args.contains(&"resume".into()));
             }
         }
         std::fs::remove_file(prompt).unwrap();

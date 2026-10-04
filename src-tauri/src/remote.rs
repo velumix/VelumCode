@@ -521,6 +521,7 @@ fn router(state: WebState) -> Router {
         .route("/api/sessions", get(sessions))
         .route("/api/sessions/{id}", get(replay))
         .route("/api/sessions/{id}/send", post(send))
+        .route("/api/sessions/{id}/respond", post(respond))
         .route("/api/sessions/{id}/queue", post(queue))
         .route("/api/sessions/{id}/stop", post(stop))
         .route("/api/sessions/{id}/options", post(configure))
@@ -746,7 +747,25 @@ async fn replay(
             StatusCode::NOT_FOUND,
             "This conversation was closed on the desktop.".into(),
         ))?;
-    Ok(Json(json!(replay)))
+    let mut value = json!(replay);
+    value["interactions"] = json!(runner::interactions_snapshot(app, &id).map_err(bad)?);
+    Ok(Json(value))
+}
+
+async fn respond(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(decision): Json<crate::interactions::Decision>,
+) -> ApiResult {
+    authenticate(&state, &headers, true)?;
+    let app = state
+        .app
+        .as_ref()
+        .ok_or_else(|| bad("Desktop unavailable."))?;
+    let snapshot = runner::respond_interaction(app, &id, decision, "phone")
+        .map_err(|message| ApiError(StatusCode::CONFLICT, message))?;
+    Ok(Json(json!(snapshot)))
 }
 
 #[derive(Deserialize)]

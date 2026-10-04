@@ -14,6 +14,7 @@ pub struct PtySession {
     master: Box<dyn MasterPty + Send>,
     writer: Mutex<Box<dyn std::io::Write + Send>>,
     child: PtyChild,
+    _continuation: Option<crate::runner::TerminalLease>,
 }
 
 #[derive(Default)]
@@ -186,6 +187,34 @@ fn report_exit_code(app: &AppHandle, id: &str, child: &PtyChild) {
 }
 
 fn spawn_reader(app: AppHandle, id: String, child: PtyChild, mut reader: Box<dyn Read + Send>) {
+    // ConPTY can retain its output pipe after the process exits while the
+    // master handle is still alive. Observe process exit independently so a
+    // continued conversation does not keep its terminal lease forever.
+    let monitor_app = app.clone();
+    let monitor_id = id.clone();
+    let monitor_child = child.clone();
+    std::thread::spawn(move || loop {
+        let exited = {
+            let Ok(mut handle) = monitor_child.lock() else {
+                return;
+            };
+            let Some(process) = handle.as_mut() else {
+                return;
+            };
+            match process.try_wait() {
+                Ok(status) => status.is_some(),
+                Err(_) => return,
+            }
+        };
+        if exited {
+            // Give the output reader a chance to consume the final buffered
+            // text. Both paths remove only this exact process registration.
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            report_exit_code(&monitor_app, &monitor_id, &monitor_child);
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    });
     std::thread::spawn(move || {
         let mut pending: Vec<u8> = Vec::new();
         let mut buf = [0u8; READ_CHUNK];
@@ -225,11 +254,29 @@ pub fn pty_spawn(
     workspace: Option<String>,
     provider: Option<crate::providers::Provider>,
     options: Option<crate::provider_models::RunOptions>,
+    resume_tab_id: Option<String>,
 ) -> Result<SpawnInfo, String> {
-    let workspace = crate::runner::resolve_workspace(workspace)?;
     kill_session(&state, &id);
-    let provider = provider.unwrap_or_default();
-    let options = options.unwrap_or_default();
+    let continuation = resume_tab_id
+        .as_deref()
+        .map(|tab| {
+            app.state::<crate::runner::AgentState>()
+                .reserve_terminal(&app, tab)
+        })
+        .transpose()?;
+    let workspace = if let Some(saved) = &continuation {
+        saved.workspace.clone()
+    } else {
+        crate::runner::resolve_workspace(workspace)?
+    };
+    let provider = continuation
+        .as_ref()
+        .map(|saved| saved.provider)
+        .unwrap_or_else(|| provider.unwrap_or_default());
+    let options = continuation
+        .as_ref()
+        .map(|saved| saved.options.clone())
+        .unwrap_or_else(|| options.unwrap_or_default());
     options.validate(provider)?;
     let muse_path = provider.resolve().ok_or_else(|| provider.missing())?;
     let pty_system = native_pty_system();
@@ -241,7 +288,18 @@ pub fn pty_spawn(
             pixel_height: 0,
         })
         .map_err(|e| format!("failed to open terminal: {e}"))?;
-    let mut cmd = build_command_with_args(&muse_path, &options.args(provider));
+    let mut args = options.args(provider);
+    if let Some(saved) = &continuation {
+        args.extend([
+            if provider == crate::providers::Provider::Muse {
+                "resume".into()
+            } else {
+                "--conversation".into()
+            },
+            saved.session_id.clone(),
+        ]);
+    }
+    let mut cmd = build_command_with_args(&muse_path, &args);
     cmd.cwd(&workspace);
     let writer = pair
         .master
@@ -265,6 +323,7 @@ pub fn pty_spawn(
             master: pair.master,
             writer: Mutex::new(writer),
             child: Arc::clone(&child),
+            _continuation: continuation.map(|saved| saved.lease),
         },
     );
     drop(sessions);
@@ -325,6 +384,29 @@ pub fn pty_resize(state: State<PtyState>, id: String, cols: u16, rows: u16) -> R
 #[tauri::command]
 pub fn pty_kill(state: State<PtyState>, id: String) -> Result<(), String> {
     kill_session(&state, &id);
+    Ok(())
+}
+
+/// A reloaded WebView may no longer have the native PTY handle. Close only
+/// the continuation owned by this chat, never an independent terminal.
+#[tauri::command]
+pub fn pty_close_continuation(state: State<PtyState>, tab_id: String) -> Result<(), String> {
+    let ids: Vec<String> = state
+        .sessions
+        .lock()
+        .map_err(|_| "Terminal state unavailable.")?
+        .iter()
+        .filter(|(_, session)| {
+            session
+                ._continuation
+                .as_ref()
+                .is_some_and(|lease| lease.tab_id == tab_id)
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in ids {
+        kill_session(&state, &id);
+    }
     Ok(())
 }
 

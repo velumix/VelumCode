@@ -259,7 +259,13 @@ pub(crate) fn should_notify(
     foreground: bool,
     outcome: &str,
 ) -> bool {
-    enabled && !quitting && !foreground && matches!(outcome, "completed" | "failed" | "blocked")
+    enabled
+        && !quitting
+        && !foreground
+        && matches!(
+            outcome,
+            "completed" | "failed" | "blocked" | "awaiting_review"
+        )
 }
 
 pub fn notify_turn(app: &AppHandle, tab_id: &str, outcome: &str) {
@@ -286,6 +292,8 @@ pub fn notify_turn(app: &AppHandle, tab_id: &str, outcome: &str) {
     };
     let body = if outcome == "completed" {
         "Open Velum Code to continue your conversation."
+    } else if outcome == "awaiting_review" {
+        "An agent is waiting for your response. Open its conversation, or Bots > Activity for a scheduled run."
     } else {
         "A task couldn't finish. Open the conversation to review the error."
     };

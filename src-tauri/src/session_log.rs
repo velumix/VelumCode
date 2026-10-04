@@ -94,14 +94,30 @@ impl SessionLog {
         }
     }
 
-    pub fn record(&self, id: &str, event: &AgentEvent) {
+    pub fn interactions_changed(&self, id: &str, waiting: bool) {
+        if let Some(log) = self.0.lock().unwrap().get_mut(id) {
+            // Live requests travel separately from history. Revision changes
+            // still wake phone replay so its authoritative snapshot refreshes.
+            log.summary.revision += 1;
+            if log.summary.running {
+                log.summary.status = if waiting {
+                    "awaiting_review"
+                } else {
+                    "running"
+                }
+                .into();
+            }
+        }
+    }
+
+    pub fn record(&self, id: &str, event: &AgentEvent) -> Option<u64> {
         // The runner emits an authoritative turn_start before reading CLI output.
         if matches!(event, AgentEvent::UserMessage { .. }) {
-            return;
+            return None;
         }
         let mut logs = self.0.lock().unwrap();
         let Some(log) = logs.get_mut(id) else {
-            return;
+            return None;
         };
         match event {
             AgentEvent::QueueState { queue, running } => {
@@ -170,6 +186,7 @@ impl SessionLog {
                 break;
             }
         }
+        Some(log.summary.revision)
     }
 
     pub fn summaries(&self) -> Vec<Summary> {

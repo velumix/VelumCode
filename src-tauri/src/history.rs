@@ -351,6 +351,13 @@ pub async fn history_desktop_load(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<HistoryState>();
         let _io = state.io.lock().unwrap();
+        // A WebView can reload before the background checkpoint reaches disk.
+        // Its current native snapshot owns newer tabs/drafts and must not be
+        // replaced by that older checkpoint.
+        let mut desktop = state.desktop.lock().unwrap();
+        if let Some(snapshot) = desktop.as_ref() {
+            return Ok(Some(snapshot.clone()));
+        }
         let path = state.root.join("desktop.json");
         if !path.exists() {
             return Ok(None);
@@ -366,7 +373,7 @@ pub async fn history_desktop_load(
         }
         let snapshot: serde_json::Value = serde_json::from_slice(&bytes)
             .map_err(|e| format!("Could not read desktop checkpoint: {e}"))?;
-        *state.desktop.lock().unwrap() = Some(snapshot.clone());
+        *desktop = Some(snapshot.clone());
         Ok(Some(snapshot))
     })
     .await

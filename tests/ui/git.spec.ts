@@ -9,8 +9,17 @@ test("Git panel shows branches, status and per-file diff without editing", async
   await page.getByLabel("Compare working tree against").selectOption("improve/ui-customization");
   await expect(page.getByRole("button",{name:/src\/App\.tsx/})).toBeVisible();
   await expect(page.getByRole("button",{name:/GitPanel\.tsx/})).toBeVisible();
+  await expect(page.getByText("Recent commits")).toBeVisible();
+  await expect(page.getByText("Polish conversation layout")).toBeVisible();
+  await expect(page.getByText("Unstaged (1)")).toBeVisible();
+  await expect(page.getByText("Untracked (1)")).toBeVisible();
+  await expect(page.locator('section[aria-label="Staged"]')).toHaveCount(0);
+  await expect(page.getByText(/Upstream origin\/main/)).toBeVisible();
   await page.getByRole("button",{name:/src\/App\.tsx/}).click();
   await expect(page.getByLabel("Diff of src/App.tsx")).toContainText("+new");
+  await expect(page.getByLabel("Find in diff")).toBeVisible();
+  await page.getByLabel("Find in diff").fill("new");
+  await expect(page.getByText(/lines match/)).toBeVisible();
   await expect(page.getByText("never changes files",{exact:false})).toBeVisible();
   expect((await new AxeBuilder({page}).include(".git-panel").analyze()).violations).toEqual([]);
   await page.getByRole("button",{name:"Close Git panel",exact:true}).click();

@@ -82,8 +82,17 @@
 .correction-actions .correction-primary { background: var(--accent); border-color: transparent; color: var(--on-accent); font-weight: 550; }
 .correction-error { color: var(--danger); font-size: calc(11px * var(--ui-scale)); margin: 5px 0; line-height: 1.6; }
 .correction-done { margin-left: 38px; }
-.recovery-actions { display: flex; gap: 8px; margin-top: 9px; }
-.recovery-actions button { padding: 7px 10px; color: var(--text); background: var(--raised); border: 1px solid var(--border); border-radius: 7px; font-size: calc(11px * var(--ui-scale)); }
+.recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 9px; }
+.recovery-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 10px; color: var(--text); background: var(--raised); border: 1px solid var(--border); border-radius: 7px; font-size: calc(11px * var(--ui-scale)); }
+.request-recovery { margin-top: 10px; color: var(--text); white-space: normal; }
+.request-recovery-hint,.request-recovery-result { margin: 8px 0; color: var(--muted); font-size: calc(11px * var(--ui-scale)); line-height: 1.6; }
+.request-recovery-editor { display: grid; gap: 7px; margin-top: 12px; }
+.request-recovery-editor label { font-size: calc(11px * var(--ui-scale)); font-weight: 500; }
+.request-recovery-editor textarea { display: block; width: 100%; min-width: 0; min-height: 90px; max-height: 280px; resize: vertical; padding: 10px 11px; border: 1px solid var(--control-border); border-radius: 8px; background: var(--control-bg); color: var(--text); font: var(--chat-font-size,14px)/1.6 var(--chat-font,inherit); }
+.request-recovery-editor textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.request-recovery-error { margin: 8px 0; color: var(--danger); }
+.phone-notice .recovery-actions button { min-height: 44px; }
+.phone-notice .request-recovery-editor textarea { font-size: 16px; }
 .guidance-review-count { display: inline-block; min-width: 16px; padding: 1px 4px; border-radius: 5px; background: var(--accent-dim); color: var(--accent); font-size: calc(10px * var(--ui-scale)); }
 .phone-transcript .agent-activity { margin-block: 7px; }
 .phone-message .correction-composer { text-align: left; }
@@ -99,3 +108,13 @@
 @media (max-width:800px) { .assistant-summary { padding-inline:20px; } .assistant-summary-action { font-size:0;gap:0; } .activity-summary > span { display:none; } .app .chat-empty { padding-inline:4px; } }
 @media (max-height:620px) { .app .chat-empty { padding-block:0; } .app .welcome-mark { width:48px; margin-bottom:10px; } .app .welcome-mark .velum-mark { width:42px;height:42px; } .app .chat-starters { margin-top:18px; } .app .starter-btn { padding-block:11px; } }
 @media (prefers-reduced-motion:reduce) { .activity-toggle > svg { transition:none; } }
+@media (max-height:600px) {
+  .app .composer { padding: 12px 12px 8px; }
+  .app .composer textarea { min-height: 32px; max-height: 80px; }
+  .app .composer-dock { padding-top: 4px; }
+  .app .chat-scroll { padding-block: 12px; }
+  .app .interaction-pending { padding: 10px 12px; }
+  .app .interaction-description { margin-top: 6px; }
+  .app .interaction-command { margin-top: 8px; padding: 6px 8px; }
+  .app .interaction-toolbar { margin-top: 8px; }
+}

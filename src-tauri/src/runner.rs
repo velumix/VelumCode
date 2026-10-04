@@ -24,6 +24,7 @@ pub struct AgentSession {
     measurement_clock: Mutex<Option<std::time::Instant>>,
     measurement: Mutex<Option<Arc<Mutex<crate::tool_bridge::Measurement>>>>,
     tool_scope: Mutex<Option<std::sync::Weak<crate::tool_bridge::Scope>>>,
+    interactions: Mutex<Option<Arc<crate::interactions::Broker>>>,
     registration: u64,
     access: Mutex<AccessState>,
     bot_id: Option<String>,
@@ -124,13 +125,37 @@ impl AccessState {
 #[derive(Default)]
 pub struct AgentState {
     sessions: Mutex<HashMap<String, Arc<AgentSession>>>,
+    terminal_leases: Arc<Mutex<HashMap<String, (String, std::path::PathBuf)>>>,
     next_registration: AtomicU64,
     updating: AtomicBool,
     startup_pending: AtomicBool,
 }
 
+pub struct TerminalContinuation {
+    pub provider: Provider,
+    pub options: RunOptions,
+    pub workspace: std::path::PathBuf,
+    pub session_id: String,
+    pub lease: TerminalLease,
+}
+pub struct TerminalLease {
+    pub tab_id: String,
+    key: String,
+    leases: Arc<Mutex<HashMap<String, (String, std::path::PathBuf)>>>,
+}
+impl Drop for TerminalLease {
+    fn drop(&mut self) {
+        if let Ok(mut leases) = self.leases.lock() {
+            leases.remove(&self.key);
+        }
+    }
+}
+
 impl AgentSession {
     fn stop(&self) {
+        if let Some(broker) = self.interactions.lock().ok().and_then(|b| b.clone()) {
+            broker.close("This turn was stopped. Its requests can no longer be answered.");
+        }
         if let Some(scope) = self
             .tool_scope
             .lock()
@@ -152,6 +177,83 @@ impl AgentSession {
 }
 
 impl AgentState {
+    pub fn reserve_terminal(
+        &self,
+        app: &AppHandle,
+        tab: &str,
+    ) -> Result<TerminalContinuation, String> {
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|_| "Agent state unavailable.")?;
+        if self.work_blocked() {
+            return Err("Velum is not ready to start a terminal.".into());
+        }
+        let session = sessions
+            .values()
+            .filter(|s| s.tab_id == tab)
+            .max_by_key(|s| s.registration)
+            .ok_or("Open the saved chat before continuing in terminal.")?;
+        if !matches!(session.provider, Provider::Muse | Provider::Antigravity) {
+            return Err("Terminal continuation is unavailable for this provider.".into());
+        }
+        if *session.running.lock().unwrap() || session.child.lock().unwrap().is_some() {
+            return Err(
+                "Stop the headless turn and wait for it to finish before continuing in terminal."
+                    .into(),
+            );
+        }
+        if !session.queue.lock().unwrap().items.is_empty() {
+            return Err("Finish or clear queued messages before continuing in terminal.".into());
+        }
+        if sessions.iter().any(|(id, other)| {
+            *other.running.lock().unwrap()
+                && other.workspace == session.workspace
+                && app.state::<crate::automation::Store>().managed(id)
+        }) {
+            return Err(
+                "Wait for scheduled work in this project before opening a continued terminal."
+                    .into(),
+            );
+        }
+        let session_id = session.session_id.lock().unwrap().clone();
+        uuid::Uuid::parse_str(&session_id)
+            .map_err(|_| "This conversation has no saved provider session yet.")?;
+        let key = format!("{}:{session_id}", session.provider.command());
+        let mut leases = self
+            .terminal_leases
+            .lock()
+            .map_err(|_| "Terminal ownership unavailable.")?;
+        if leases.contains_key(&key) || leases.values().any(|(owner, _)| owner == tab) {
+            return Err("This conversation is already open in a terminal.".into());
+        }
+        leases.insert(key.clone(), (tab.into(), session.workspace.clone()));
+        let options = session.options.lock().unwrap().clone();
+        Ok(TerminalContinuation {
+            provider: session.provider,
+            options,
+            workspace: session.workspace.clone(),
+            session_id,
+            lease: TerminalLease {
+                tab_id: tab.into(),
+                key,
+                leases: self.terminal_leases.clone(),
+            },
+        })
+    }
+
+    fn terminal_owns(&self, session: &AgentSession) -> bool {
+        let key = format!(
+            "{}:{}",
+            session.provider.command(),
+            session.session_id.lock().unwrap()
+        );
+        self.terminal_leases
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(id, (tab, _))| id == &key || tab == &session.tab_id)
+    }
     pub fn set_startup_pending(&self, pending: bool) {
         self.startup_pending.store(pending, Ordering::SeqCst);
     }
@@ -171,6 +273,11 @@ impl AgentState {
             .sessions
             .lock()
             .map_err(|_| "Agent state unavailable.")?;
+        if !self.terminal_leases.lock().unwrap().is_empty() {
+            return Err(
+                "Close continued terminal conversations before restarting to update.".into(),
+            );
+        }
         for session in sessions.values() {
             let running = *session
                 .running
@@ -259,11 +366,34 @@ impl AgentState {
             s.stop();
         }
     }
+    pub fn review_wait(&self, id: &str) -> (bool, u64) {
+        let session = self
+            .sessions
+            .lock()
+            .ok()
+            .and_then(|sessions| sessions.get(id).cloned());
+        let broker = session.and_then(|session| {
+            session
+                .interactions
+                .lock()
+                .ok()
+                .and_then(|value| value.clone())
+        });
+        broker
+            .map(|broker| (broker.waiting(), broker.waited_seconds()))
+            .unwrap_or_default()
+    }
     pub fn workspace_busy(&self, workspace: &str) -> bool {
         let workspace = std::fs::canonicalize(workspace).ok();
-        self.sessions.lock().unwrap().values().any(|s| {
+        let busy = self.sessions.lock().unwrap().values().any(|s| {
             *s.running.lock().unwrap() && std::fs::canonicalize(&s.workspace).ok() == workspace
-        })
+        });
+        busy || self
+            .terminal_leases
+            .lock()
+            .unwrap()
+            .values()
+            .any(|(_, path)| std::fs::canonicalize(path).ok() == workspace)
     }
     pub fn shutdown(&self) {
         if let Ok(mut sessions) = self.sessions.lock() {
@@ -276,6 +406,7 @@ impl AgentState {
 
 #[derive(serde::Serialize, Clone)]
 pub struct NewInfo {
+    pub live: Option<LiveInfo>,
     pub bot: Option<crate::bots::Identity>,
     pub id: String,
     pub session_id: String,
@@ -286,6 +417,15 @@ pub struct NewInfo {
 }
 
 #[derive(serde::Serialize, Clone)]
+pub struct LiveInfo {
+    revision: u64,
+    running: bool,
+    yolo: bool,
+    terminal: bool,
+    queue: crate::message_queue::Snapshot,
+}
+
+#[derive(serde::Serialize, Clone)]
 pub struct TurnInfo {
     pub id: String,
     pub turn_id: String,
@@ -293,15 +433,89 @@ pub struct TurnInfo {
 }
 
 fn emit(app: &AppHandle, id: &str, event: AgentEvent) {
-    app.state::<crate::session_log::SessionLog>()
+    let seq = app
+        .state::<crate::session_log::SessionLog>()
         .record(id, &event);
     app.state::<crate::history::HistoryState>().mark(id);
     crate::remote::changed(app);
     // Emit failures mean the window is gone; nothing left to report to.
     let _ = app.emit(
         "agent-event",
-        serde_json::json!({ "id": id, "event": event }),
+        serde_json::json!({ "id": id, "seq":seq, "event": event }),
     );
+}
+
+fn publish_interactions(app: &AppHandle, id: &str, broker: &crate::interactions::Broker) {
+    let snapshot = broker.snapshot();
+    app.state::<crate::session_log::SessionLog>()
+        .interactions_changed(id, broker.waiting());
+    let _ = app.emit(
+        "agent-interactions",
+        serde_json::json!({"id":id,"snapshot":snapshot}),
+    );
+    crate::remote::changed(app);
+}
+
+pub fn interactions_snapshot(
+    app: &AppHandle,
+    id: &str,
+) -> Result<crate::interactions::Snapshot, String> {
+    let state = app.state::<AgentState>();
+    let session = state
+        .sessions
+        .lock()
+        .map_err(|_| "Agent state unavailable.")?
+        .get(id)
+        .cloned()
+        .ok_or("Conversation is unavailable.")?;
+    let broker = session
+        .interactions
+        .lock()
+        .map_err(|_| "Approval state unavailable.")?
+        .clone();
+    Ok(broker.map(|b| b.snapshot()).unwrap_or_default())
+}
+
+pub fn respond_interaction(
+    app: &AppHandle,
+    id: &str,
+    decision: crate::interactions::Decision,
+    source: &str,
+) -> Result<crate::interactions::Snapshot, String> {
+    let state = app.state::<AgentState>();
+    // Share the admission lock with Stop/replacement. The adapter checks the
+    // turn generation again immediately before writing the provider command.
+    let sessions = state
+        .sessions
+        .lock()
+        .map_err(|_| "Agent state unavailable.")?;
+    let session = sessions.get(id).ok_or("Conversation is unavailable.")?;
+    let broker = session
+        .interactions
+        .lock()
+        .map_err(|_| "Approval state unavailable.")?
+        .clone()
+        .ok_or("This turn has no interactive requests.")?;
+    let snapshot = broker.respond(decision, source)?;
+    publish_interactions(app, id, &broker);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub fn agent_interactions(
+    app: AppHandle,
+    id: String,
+) -> Result<crate::interactions::Snapshot, String> {
+    interactions_snapshot(&app, &id)
+}
+
+#[tauri::command]
+pub fn agent_respond(
+    app: AppHandle,
+    id: String,
+    decision: crate::interactions::Decision,
+) -> Result<crate::interactions::Snapshot, String> {
+    respond_interaction(&app, &id, decision, "desktop")
 }
 
 /// Filename-safe fragment derived from a tab id.
@@ -390,7 +604,7 @@ fn mark_permission_blocked(terminal: &mut Option<AgentEvent>, denied: bool) {
     if let Some(AgentEvent::TurnEnd { status, reason, .. }) = terminal {
         if denied && status != "cancelled" {
             *status = "blocked".into();
-            *reason = Some("Antigravity blocked a tool because headless mode cannot ask for permission. On your desktop, open Terminal in an Antigravity tab and enter /permissions, or add a scoped rule such as \"command(...)\" under permissions.allow in ~/.gemini/antigravity-cli/settings.json. Allow only the command needed, then retry. Scheduled work is paused; partial output is not a completed task.".into());
+            *reason = Some("Antigravity blocked a tool because headless mode cannot ask for permission. On the desktop, choose Continue this conversation in terminal to answer native prompts. If needed, review /permissions or a scoped permissions.allow rule such as command(...) before retrying. Scheduled work is paused; partial output is not a completed task.".into());
         }
     }
 }
@@ -569,6 +783,7 @@ fn resolve_terminal(
 
 struct TurnContext {
     child: Arc<SharedChild>,
+    control: Option<crate::provider_control::Client>,
     tools: Option<crate::tool_bridge::Registration>,
     measurement: Arc<Mutex<crate::tool_bridge::Measurement>>,
     probe: Option<crate::workspace_access::Probe>,
@@ -590,6 +805,7 @@ fn spawn_reader(
 ) {
     let TurnContext {
         child,
+        mut control,
         tools,
         measurement,
         mut probe,
@@ -619,7 +835,7 @@ fn spawn_reader(
         // thread's numeric metadata, and join before publishing completion.
         let (usage_stop, usage_receiver) = std::sync::mpsc::channel::<u64>();
         let usage_handle =
-            matches!(session.provider, Provider::Codex | Provider::Muse).then(|| {
+            (matches!(session.provider, Provider::Codex | Provider::Muse) && control.is_none()).then(|| {
                 let app = app.clone();
                 let session = Arc::clone(&session);
                 let id = id.clone();
@@ -776,7 +992,9 @@ fn spawn_reader(
         let mut answer = String::new();
         let mut action_error = None;
         let mut action_report = None;
-        loop {
+        let mut interaction_revision = u64::MAX;
+        let mut interaction_notified = std::collections::HashSet::new();
+        'reader: loop {
             let batch = match output.poll() {
                 Ok(batch) => batch,
                 Err(error) => {
@@ -807,7 +1025,26 @@ fn spawn_reader(
                 if let Some(probe) = probe.as_mut() {
                     probe.observe_line(session.provider, &line);
                 }
-                let events = fold.fold_line(&line);
+                let events = if let Some(client) = control.as_mut() {
+                    match client.observe_line(&line) {
+                        Ok(events) => events,
+                        Err(error) => {
+                            if client.broker().snapshot().active {
+                                supervisor_failure = Some(error);
+                            }
+                            break 'reader;
+                        }
+                    }
+                } else {
+                    fold.fold_line(&line)
+                };
+                if let Some(client) = control.as_ref() {
+                    fold.session_id.clone_from(client.session_id());
+                    fold.run_id.clone_from(client.run_id());
+                    if let Some(effective) = client.effective() {
+                        session.access.lock().unwrap().restrictions = effective.clone();
+                    }
+                }
                 {
                     let mut measured = measurement.lock().unwrap();
                     let elapsed = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
@@ -919,6 +1156,36 @@ fn spawn_reader(
                     }
                 }
             }
+            if let Some(client) = control.as_mut() {
+                if client.broker().snapshot().active {
+                    if let Err(error) = client.poll() {
+                        supervisor_failure = Some(error);
+                        break;
+                    }
+                }
+                let snapshot = client.broker().snapshot();
+                if snapshot.revision != interaction_revision {
+                    let new_request = snapshot
+                        .requests
+                        .iter()
+                        .filter(|request| request.status == "pending")
+                        .fold(false, |new, request| {
+                            interaction_notified.insert((request.id.clone(), request.revision))
+                                || new
+                        });
+                    if new_request {
+                        crate::desktop::notify_turn(&app, &session.tab_id, "awaiting_review");
+                    }
+                    interaction_revision = snapshot.revision;
+                    publish_interactions(&app, &id, client.broker());
+                }
+            }
+            let waiting = control
+                .as_ref()
+                .is_some_and(|client| client.broker().waiting());
+            if waiting {
+                supervisor.warned = false;
+            }
             let status = match child.status() {
                 Ok(status) => status,
                 Err(error) => {
@@ -934,8 +1201,8 @@ fn spawn_reader(
             }
             match supervisor.observe(
                 std::time::Instant::now(),
-                batch.activity,
-                terminal.is_some(),
+                batch.activity || waiting,
+                terminal.is_some() && control.as_ref().map_or(true, |client| client.settling()),
                 status,
                 output.closed(),
             ) {
@@ -976,6 +1243,12 @@ fn spawn_reader(
         // Closing this process's job also stops descendants after their
         // parent has exited. Completion never waits for inherited pipe EOF.
         child.stop();
+        if let Some(client) = control.as_ref() {
+            client
+                .broker()
+                .close("This turn has ended. Its requests can no longer be answered.");
+            publish_interactions(&app, &id, client.broker());
+        }
         let headless_denial = session.provider == Provider::Antigravity
             && permission_denied.load(std::sync::atomic::Ordering::Relaxed);
         let policy_tool_events = if headless_denial {
@@ -1057,6 +1330,14 @@ fn spawn_reader(
                 &mut terminal,
                 permission_denied.load(std::sync::atomic::Ordering::Relaxed),
             );
+        }
+        if control.as_ref().is_some_and(|client| client.denied()) {
+            if let Some(AgentEvent::TurnEnd { status, reason, .. }) = terminal.as_mut() {
+                if status == "completed" {
+                    *status = "blocked".into();
+                    *reason = Some("A permission request was declined or cancelled. Review the partial work before continuing; queued and scheduled work is paused.".into());
+                }
+            }
         }
         drop(prompt);
         if let Ok(mut prompt) = session.prompt.lock() {
@@ -1282,6 +1563,49 @@ pub fn agent_new(
     let options = options.unwrap_or_default();
     options.validate(provider)?;
     let tab_id = tab_id.unwrap_or_else(|| id.clone());
+    // A WebView reload can leave its native reader alive. Reattach to that
+    // owner, including its pending approvals, instead of launching a rival.
+    if resume.unwrap_or(false) {
+        let sessions = state
+            .sessions
+            .lock()
+            .map_err(|_| "Agent state unavailable.")?;
+        if let Some((live_id, live)) = sessions
+            .iter()
+            .filter(|(_, live)| {
+                live.tab_id == tab_id
+                    && live.workspace == workspace
+                    && live.provider == provider
+                    && live.bot_id == bot_id
+                    && live.task_id == task_id
+            })
+            .max_by_key(|(_, live)| live.registration)
+        {
+            if let Some(replay) = app
+                .state::<crate::session_log::SessionLog>()
+                .replay(live_id, 0)
+            {
+                let session_id = live.session_id.lock().unwrap().clone();
+                let yolo = live.access.lock().unwrap().requested;
+                return Ok(NewInfo {
+                    live: Some(LiveInfo {
+                        revision: replay.session.revision,
+                        running: replay.session.running,
+                        yolo,
+                        terminal: state.terminal_owns(live),
+                        queue: replay.session.queue,
+                    }),
+                    bot: live.bot_identity.lock().unwrap().clone(),
+                    id: live_id.clone(),
+                    session_id,
+                    workspace: workspace.display().to_string(),
+                    workspace_notice: None,
+                    restored: replay.events.into_iter().map(|entry| entry.event).collect(),
+                    truncated: replay.truncated,
+                });
+            }
+        }
+    }
     let history = app.state::<crate::history::HistoryState>();
     let saved = if resume.unwrap_or(false) {
         history
@@ -1292,15 +1616,12 @@ pub fn agent_new(
     };
     let session_id = if let Some(saved) = &saved {
         saved.session_id.clone()
-    } else if provider == Provider::Muse {
-        uuid::Uuid::new_v4().to_string()
     } else {
         String::new()
     };
     let restored_mode = saved.as_ref().and_then(|s| s.permission_mode);
     let mut access = AccessState::new(&workspace, provider, restored_mode);
-    // Muse allocates its ID before launching. A new ID is not a resumed
-    // conversation with an unknown legacy permission mode.
+    // The provider mints new session IDs after the control handshake.
     access.fresh_session_pending = saved.is_none();
     let old = state
         .sessions
@@ -1312,6 +1633,7 @@ pub fn agent_new(
                 measurement_clock: Mutex::new(None),
                 measurement: Mutex::new(None),
                 tool_scope: Mutex::new(None),
+                interactions: Mutex::new(None),
                 registration: state.next_registration.fetch_add(1, Ordering::Relaxed),
                 access: Mutex::new(access),
                 bot_id: bot_id.clone(),
@@ -1371,6 +1693,7 @@ pub fn agent_new(
     }
     crate::remote::changed(&app);
     Ok(NewInfo {
+        live: None,
         bot: bot.map(|p| p.identity()),
         id,
         session_id,
@@ -1415,6 +1738,9 @@ pub fn configure_session(
         .map_err(|_| "Agent state unavailable.")?;
     let (id, session) = configuration_target(&sessions, id, by_tab)
         .ok_or("Conversation is still starting. Try again in a moment.")?;
+    if state.terminal_owns(session) {
+        return Err("Close the continued terminal conversation before changing models.".into());
+    }
     if *session.running.lock().unwrap() {
         return Err("Wait for the current response or stop it before changing models.".into());
     }
@@ -1491,11 +1817,7 @@ fn change_permissions(app: &AppHandle, id: &str, session: &AgentSession, yolo: b
     let mut access = session.access.lock().unwrap();
     let changed = access.change(yolo, !resume.is_empty());
     if changed {
-        *resume = if session.provider == Provider::Muse {
-            uuid::Uuid::new_v4().to_string()
-        } else {
-            String::new()
-        };
+        *resume = String::new();
         *session.memory.lock().unwrap() = Default::default();
         *session.shared_memory.lock().unwrap() = Default::default();
         app.state::<crate::history::HistoryState>()
@@ -1524,6 +1846,11 @@ pub fn agent_set_permissions(
         .lock()
         .map_err(|_| "Agent state unavailable.")?;
     let session = sessions.get(&id).ok_or("Conversation is still starting.")?;
+    if state.terminal_owns(session) {
+        return Err(
+            "Close the continued terminal conversation before changing permissions.".into(),
+        );
+    }
     if *session.running.lock().unwrap() {
         return Err("Wait for the current turn or stop it before changing permissions.".into());
     }
@@ -1561,6 +1888,9 @@ fn send_inner(
     let session = sessions
         .get(&id)
         .ok_or_else(|| "agent session not found; reopen the tab".to_string())?;
+    if state.terminal_owns(session) {
+        return Err("This conversation is open in Terminal. Exit that terminal before sending another chat message.".into());
+    }
     let running = *session
         .running
         .lock()
@@ -1606,6 +1936,20 @@ fn send_inner(
     };
     let session = Arc::clone(session);
     let managed = app.state::<crate::automation::Store>().managed(&id);
+    if managed
+        && state
+            .terminal_leases
+            .lock()
+            .unwrap()
+            .values()
+            .any(|(_, path)| {
+                std::fs::canonicalize(path).ok() == std::fs::canonicalize(&session.workspace).ok()
+            })
+    {
+        return Err(
+            "Close the continued terminal in this project before starting scheduled work.".into(),
+        );
+    }
     if sessions.iter().any(|(other_id, other)| {
         other_id != &id
             && *other.running.lock().unwrap()
@@ -1844,6 +2188,43 @@ fn send_inner(
         .permission_mode(&id, yolo);
 
     let mut child = child;
+    let control = if matches!(provider, Provider::Muse | Provider::Codex) {
+        let input = child
+            .stdin
+            .take()
+            .ok_or("Could not capture the provider's control input.")?;
+        let (broker, controls) = crate::interactions::Broker::new(turn_id.clone());
+        let client = if provider == Provider::Muse {
+            crate::provider_control::Client::Muse(crate::muse_msp::Client::new(
+                input,
+                broker.clone(),
+                controls,
+                session_id.clone(),
+                workspace.display().to_string(),
+                prepared,
+                prompt.clone(),
+                options.clone(),
+                yolo,
+            )?)
+        } else {
+            crate::provider_control::Client::Codex(crate::codex_control::Client::new(
+                input,
+                broker.clone(),
+                controls,
+                session_id.clone(),
+                workspace.display().to_string(),
+                prepared,
+                options.clone(),
+                yolo,
+                usage_baseline.clone(),
+            )?)
+        };
+        *session.interactions.lock().unwrap() = Some(broker);
+        Some(client)
+    } else {
+        *session.interactions.lock().unwrap() = None;
+        None
+    };
     *session.memory.lock().unwrap() = next_memory;
     *session.shared_memory.lock().unwrap() = next_shared;
     let stdout = child.stdout.take().ok_or_else(|| {
@@ -1925,6 +2306,7 @@ fn send_inner(
         output,
         TurnContext {
             child,
+            control,
             tools,
             measurement,
             probe: pending.probe.take(),
@@ -2097,6 +2479,7 @@ mod tests {
                 measurement: Mutex::new(None),
                 tool_scope: Mutex::new(None),
                 registration,
+                interactions: Mutex::new(None),
                 access: Mutex::new(AccessState::new(&workspace, Provider::Codex, Some(false))),
                 bot_id: None,
                 bot_identity: Mutex::new(None),
@@ -2148,6 +2531,7 @@ mod tests {
                 measurement: Mutex::new(None),
                 tool_scope: Mutex::new(None),
                 registration: 0,
+                interactions: Mutex::new(None),
                 access: Mutex::new(access),
                 bot_id: None,
                 bot_identity: Mutex::new(None),
@@ -2333,20 +2717,19 @@ mod tests {
     }
 
     #[test]
-    fn exec_argv_starts_with_exec_json() {
+    fn muse_launches_the_bidirectional_host() {
         let cmd = build_exec_command(Path::new("muse"), false);
         let args: Vec<_> = cmd.get_args().collect();
-        assert!(args.len() >= 2);
-        assert_eq!(args[0], std::ffi::OsStr::new("exec"));
-        assert_eq!(args[1], std::ffi::OsStr::new("--json"));
+        assert_eq!(args, [std::ffi::OsStr::new("serve")]);
     }
 
     fn has_yolo(cmd: &std::process::Command) -> bool {
-        cmd.get_args().any(|a| a == "--yolo")
+        cmd.get_args().any(|a| a == "--disable-sandbox")
+            && cmd.get_args().any(|a| a == "--trust-workspace")
     }
 
     #[test]
-    fn yolo_flag_reaches_exec_argv() {
+    fn muse_yolo_host_flags_survive_script_shims() {
         let plain = build_exec_command(Path::new("muse"), true);
         assert!(has_yolo(&plain));
         let plain = build_exec_command(Path::new("muse"), false);
@@ -2368,6 +2751,32 @@ mod tests {
         assert_eq!(silence_state(SILENCE_FAIL_MS), Silence::Expired);
         assert_eq!(silence_state(u64::MAX), Silence::Expired);
         const { assert!(SILENCE_WARN_MS < SILENCE_FAIL_MS) };
+    }
+
+    #[test]
+    fn human_review_keeps_the_watchdog_alive_but_still_allows_stop() {
+        use super::*;
+        let started = std::time::Instant::now();
+        let reviewed = started + std::time::Duration::from_secs(3_600);
+        let mut supervisor = Supervisor::new(started);
+        assert_eq!(
+            supervisor.observe(reviewed, true, false, child_process::Status::Running, false),
+            Supervision::Continue
+        );
+        assert_eq!(
+            supervisor.observe(
+                reviewed + std::time::Duration::from_millis(SILENCE_FAIL_MS),
+                false,
+                false,
+                child_process::Status::Running,
+                false
+            ),
+            Supervision::Expired
+        );
+        assert_eq!(
+            supervisor.observe(reviewed, true, false, child_process::Status::Stopped, true),
+            Supervision::Finish
+        );
     }
 
     #[test]

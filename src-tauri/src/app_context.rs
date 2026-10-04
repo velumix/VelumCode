@@ -45,6 +45,8 @@ pub async fn git_state(workspace: String) -> Result<Value, String> {
         let root = Path::new(&workspace);
         let branches = crate::workspace_tools::git_branches(root)?;
         let status = crate::workspace_tools::git_status(root)?;
+        let log = crate::workspace_tools::git_log(root, 20).unwrap_or(json!({"commits": [], "truncated": false}));
+        let sync = crate::workspace_tools::git_sync(root).unwrap_or(json!({"upstream": "", "ahead": 0, "behind": 0}));
         Ok(json!({
             "root": branches["root"],
             "current": branches["current"],
@@ -52,6 +54,11 @@ pub async fn git_state(workspace: String) -> Result<Value, String> {
             "branches_truncated": branches["truncated"],
             "status": status["status"],
             "status_truncated": status["truncated"],
+            "log": log["commits"],
+            "log_truncated": log["truncated"],
+            "upstream": sync["upstream"],
+            "ahead": sync["ahead"],
+            "behind": sync["behind"],
             "trust": "Selected repository only, for this command.",
             "global_config_changed": false,
         }))
