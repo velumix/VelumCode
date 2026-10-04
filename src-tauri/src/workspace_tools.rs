@@ -419,7 +419,12 @@ pub fn git_sync(root: &Path) -> Result<Value, String> {
     let (upstream, _) = run_git(
         "upstream",
         &repository,
-        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+        &[
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{upstream}",
+        ],
         &[],
         1024,
     )
@@ -437,7 +442,9 @@ pub fn git_sync(root: &Path) -> Result<Value, String> {
         1024,
     )
     .unwrap_or_default();
-    let mut numbers = counts.split_whitespace().filter_map(|n| n.parse::<u64>().ok());
+    let mut numbers = counts
+        .split_whitespace()
+        .filter_map(|n| n.parse::<u64>().ok());
     Ok(json!({
         "upstream": upstream,
         "ahead": numbers.next().unwrap_or(0),
