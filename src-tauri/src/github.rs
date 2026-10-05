@@ -46,7 +46,10 @@ impl GitHubState {
     }
 
     pub fn save_credentials(&self, creds: &GitHubCredentials) -> Result<(), String> {
-        let _guard = self.access.lock().map_err(|_| "Settings lock unavailable")?;
+        let _guard = self
+            .access
+            .lock()
+            .map_err(|_| "Settings lock unavailable")?;
         crate::storage::write_json(&self.config_path, creds)
     }
 }
@@ -188,7 +191,8 @@ fn get_cli_token() -> Option<(String, Option<String>)> {
 
     let mut user_cmd = std::process::Command::new("gh");
     user_cmd.args(["api", "user", "-q", ".login"]);
-    user_cmd.stdin(std::process::Stdio::null())
+    user_cmd
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     #[cfg(windows)]
@@ -199,7 +203,11 @@ fn get_cli_token() -> Option<(String, Option<String>)> {
     let account = user_cmd.output().ok().and_then(|o| {
         if o.status.success() {
             let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if !s.is_empty() { Some(s) } else { None }
+            if !s.is_empty() {
+                Some(s)
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -249,7 +257,8 @@ fn build_client(token: Option<&str>) -> Result<reqwest::blocking::Client, String
         let tok = tok.trim();
         if !tok.is_empty() {
             let auth = format!("Bearer {tok}");
-            let mut val = reqwest::header::HeaderValue::from_str(&auth).map_err(|e| e.to_string())?;
+            let mut val =
+                reqwest::header::HeaderValue::from_str(&auth).map_err(|e| e.to_string())?;
             val.set_sensitive(true);
             headers.insert(reqwest::header::AUTHORIZATION, val);
         }
@@ -263,11 +272,16 @@ fn build_client(token: Option<&str>) -> Result<reqwest::blocking::Client, String
 }
 
 fn parse_json_response(resp: reqwest::blocking::Response) -> Result<Value, String> {
-    let text = resp.text().map_err(|e| format!("Failed to read response body: {e}"))?;
+    let text = resp
+        .text()
+        .map_err(|e| format!("Failed to read response body: {e}"))?;
     serde_json::from_str(&text).map_err(|e| format!("Failed to parse JSON response: {e}"))
 }
 
-fn fetch_user(client: &reqwest::blocking::Client, source: &str) -> Result<GitHubUserProfile, String> {
+fn fetch_user(
+    client: &reqwest::blocking::Client,
+    source: &str,
+) -> Result<GitHubUserProfile, String> {
     let resp = client
         .get("https://api.github.com/user")
         .send()
@@ -298,7 +312,11 @@ fn fetch_user(client: &reqwest::blocking::Client, source: &str) -> Result<GitHub
         return Err("GitHub API rate limit exceeded or access forbidden.".into());
     }
     if !status.is_success() {
-        return Err(format!("GitHub API returned HTTP {}: {}", status.as_u16(), status.canonical_reason().unwrap_or("Error")));
+        return Err(format!(
+            "GitHub API returned HTTP {}: {}",
+            status.as_u16(),
+            status.canonical_reason().unwrap_or("Error")
+        ));
     }
 
     let val: Value = parse_json_response(resp)?;
@@ -367,7 +385,10 @@ pub fn github_auth_status(state: State<'_, GitHubState>) -> Result<GitHubAuthSta
         "pat"
     } else if has_cli {
         "cli"
-    } else if std::env::var("GITHUB_TOKEN").or_else(|_| std::env::var("GH_TOKEN")).is_ok() {
+    } else if std::env::var("GITHUB_TOKEN")
+        .or_else(|_| std::env::var("GH_TOKEN"))
+        .is_ok()
+    {
         "env"
     } else {
         "unauthenticated"
@@ -382,7 +403,10 @@ pub fn github_auth_status(state: State<'_, GitHubState>) -> Result<GitHubAuthSta
 }
 
 #[tauri::command]
-pub fn github_save_pat(state: State<'_, GitHubState>, token: String) -> Result<GitHubUserProfile, String> {
+pub fn github_save_pat(
+    state: State<'_, GitHubState>,
+    token: String,
+) -> Result<GitHubUserProfile, String> {
     let token = token.trim().to_string();
     if token.is_empty() {
         return Err("Token cannot be empty.".into());
@@ -408,7 +432,9 @@ pub fn github_clear_pat(state: State<'_, GitHubState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn github_user_profile(state: State<'_, GitHubState>) -> Result<GitHubUserProfile, String> {
+pub async fn github_user_profile(
+    state: State<'_, GitHubState>,
+) -> Result<GitHubUserProfile, String> {
     let (token, source) = resolve_token(&state);
     if token.is_none() {
         return Err("No GitHub credentials detected. Sign in with 'gh auth login' or enter a Personal Access Token in settings.".into());
@@ -440,7 +466,9 @@ pub async fn github_repo_details(
 
         let status = resp.status();
         if status == reqwest::StatusCode::NOT_FOUND {
-            return Err(format!("Repository '{repo_name}' not found on GitHub or access is restricted."));
+            return Err(format!(
+                "Repository '{repo_name}' not found on GitHub or access is restricted."
+            ));
         }
         if !status.is_success() {
             return Err(format!("GitHub API returned HTTP {status}"));
@@ -494,7 +522,8 @@ pub async fn github_repo_pulls(
 
     tauri::async_runtime::spawn_blocking(move || {
         let client = build_client(token.as_deref())?;
-        let url = format!("https://api.github.com/repos/{repo_name}/pulls?state={filter}&per_page=20");
+        let url =
+            format!("https://api.github.com/repos/{repo_name}/pulls?state={filter}&per_page=20");
         let resp = client
             .get(&url)
             .send()
@@ -505,7 +534,9 @@ pub async fn github_repo_pulls(
         }
 
         let val: Value = parse_json_response(resp)?;
-        let arr = val.as_array().ok_or("Expected JSON array from GitHub pulls")?;
+        let arr = val
+            .as_array()
+            .ok_or("Expected JSON array from GitHub pulls")?;
 
         let pulls = arr
             .iter()
@@ -513,7 +544,10 @@ pub async fn github_repo_pulls(
                 number: item["number"].as_u64().unwrap_or(0),
                 title: item["title"].as_str().unwrap_or("").to_string(),
                 user_login: item["user"]["login"].as_str().unwrap_or("").to_string(),
-                user_avatar: item["user"]["avatar_url"].as_str().unwrap_or("").to_string(),
+                user_avatar: item["user"]["avatar_url"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string(),
                 state: item["state"].as_str().unwrap_or("").to_string(),
                 draft: item["draft"].as_bool().unwrap_or(false),
                 html_url: item["html_url"].as_str().unwrap_or("").to_string(),
@@ -543,7 +577,8 @@ pub async fn github_repo_issues(
 
     tauri::async_runtime::spawn_blocking(move || {
         let client = build_client(token.as_deref())?;
-        let url = format!("https://api.github.com/repos/{repo_name}/issues?state={filter}&per_page=20");
+        let url =
+            format!("https://api.github.com/repos/{repo_name}/issues?state={filter}&per_page=20");
         let resp = client
             .get(&url)
             .send()
@@ -554,7 +589,9 @@ pub async fn github_repo_issues(
         }
 
         let val: Value = parse_json_response(resp)?;
-        let arr = val.as_array().ok_or("Expected JSON array from GitHub issues")?;
+        let arr = val
+            .as_array()
+            .ok_or("Expected JSON array from GitHub issues")?;
 
         let issues = arr
             .iter()
@@ -578,7 +615,10 @@ pub async fn github_repo_issues(
                     number: item["number"].as_u64().unwrap_or(0),
                     title: item["title"].as_str().unwrap_or("").to_string(),
                     user_login: item["user"]["login"].as_str().unwrap_or("").to_string(),
-                    user_avatar: item["user"]["avatar_url"].as_str().unwrap_or("").to_string(),
+                    user_avatar: item["user"]["avatar_url"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string(),
                     state: item["state"].as_str().unwrap_or("").to_string(),
                     labels,
                     comments: item["comments"].as_u64().unwrap_or(0),
@@ -650,7 +690,10 @@ pub async fn github_create_issue(
             number: item["number"].as_u64().unwrap_or(0),
             title: item["title"].as_str().unwrap_or("").to_string(),
             user_login: item["user"]["login"].as_str().unwrap_or("").to_string(),
-            user_avatar: item["user"]["avatar_url"].as_str().unwrap_or("").to_string(),
+            user_avatar: item["user"]["avatar_url"]
+                .as_str()
+                .unwrap_or("")
+                .to_string(),
             state: item["state"].as_str().unwrap_or("open").to_string(),
             labels,
             comments: item["comments"].as_u64().unwrap_or(0),
