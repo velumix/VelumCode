@@ -245,17 +245,29 @@ export async function boot(page: Page, delay = 0, configure = true, waitForStart
               upstream: "origin/main",
               ahead: 0,
               behind: 0,
+              remote_url: "https://github.com/velumix/VelumCode.git",
               trust: "Selected repository only, for this command.",
               global_config_changed: false,
             };
           }
           if (cmd === "git_file_diff") {
+            if (args.path === "src/components/GitPanel.tsx")
+              return {
+                base: args.base || "HEAD",
+                path: args.path,
+                diff: `diff --git a/${args.path} b/${args.path}\nnew file mode 100644\n--- /dev/null\n+++ b/${args.path}\n@@ -0,0 +1,2 @@\n+line one\n+line two`,
+                truncated: false,
+                untracked: true,
+                trust: "Selected repository only, for this command.",
+                global_config_changed: false,
+              };
             if (args.path)
               return {
                 base: args.base || "HEAD",
                 path: args.path,
                 diff: `diff --git a/${args.path} b/${args.path}\n--- a/${args.path}\n+++ b/${args.path}\n@@ -1 +1 @@\n-old\n+new`,
                 truncated: false,
+                untracked: false,
                 trust: "Selected repository only, for this command.",
                 global_config_changed: false,
               };
@@ -267,6 +279,120 @@ export async function boot(page: Page, delay = 0, configure = true, waitForStart
               trust: "Selected repository only, for this command.",
               global_config_changed: false,
             };
+          }
+          if (cmd === "github_auth_status") {
+            return {
+              has_pat: false,
+              has_cli: true,
+              cli_account: "velumix",
+              active_source: "cli",
+            };
+          }
+          if (cmd === "github_user_profile") {
+            return {
+              authenticated: true,
+              login: "velumix",
+              name: "Velumix",
+              avatar_url: "https://avatars.githubusercontent.com/u/159978288?v=4",
+              bio: "Desktop AI coding companion",
+              company: null,
+              location: null,
+              blog: "",
+              email: null,
+              public_repos: 28,
+              total_private_repos: 9,
+              followers: 1,
+              following: 0,
+              html_url: "https://github.com/velumix",
+              auth_source: "cli",
+              scopes: ["repo", "user"],
+              rate_limit_limit: 5000,
+              rate_limit_remaining: 4990,
+            };
+          }
+          if (cmd === "github_repo_details") {
+            return {
+              owner: "velumix",
+              name: "VelumCode",
+              full_name: "velumix/VelumCode",
+              description: "A Windows home for Muse, Codex and Google Antigravity.",
+              private: false,
+              fork: false,
+              html_url: "https://github.com/velumix/VelumCode",
+              clone_url: "https://github.com/velumix/VelumCode.git",
+              ssh_url: "git@github.com:velumix/VelumCode.git",
+              stars: 12,
+              forks: 3,
+              open_issues_count: 2,
+              default_branch: "main",
+              topics: ["tauri", "react", "rust"],
+              permissions: { admin: true, push: true, pull: true },
+              visibility: "public",
+            };
+          }
+          if (cmd === "github_repo_pulls") {
+            return [
+              {
+                number: 42,
+                title: "Support GitHub live identity and repository hub",
+                user_login: "velumix",
+                user_avatar: "https://avatars.githubusercontent.com/u/159978288?v=4",
+                state: "open",
+                draft: false,
+                html_url: "https://github.com/velumix/VelumCode/pull/42",
+                created_at: "2026-10-04T20:00:00Z",
+                updated_at: "2026-10-04T20:30:00Z",
+                head_ref: "feature/github-hub",
+                base_ref: "main",
+              },
+            ];
+          }
+          if (cmd === "github_repo_issues") {
+            return [
+              {
+                number: 10,
+                title: "Add GitHub pull request and issue browser",
+                user_login: "velumix",
+                user_avatar: "https://avatars.githubusercontent.com/u/159978288?v=4",
+                state: "open",
+                labels: [{ name: "enhancement", color: "a2eeef" }],
+                comments: 4,
+                html_url: "https://github.com/velumix/VelumCode/issues/10",
+                created_at: "2026-10-04T18:00:00Z",
+                updated_at: "2026-10-04T19:00:00Z",
+              },
+            ];
+          }
+          if (cmd === "github_create_issue") {
+            return {
+              number: 11,
+              title: args.title || "New Issue",
+              user_login: "velumix",
+              user_avatar: "https://avatars.githubusercontent.com/u/159978288?v=4",
+              state: "open",
+              labels: [],
+              comments: 0,
+              html_url: "https://github.com/velumix/VelumCode/issues/11",
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            };
+          }
+          if (cmd === "github_save_pat") {
+            return {
+              authenticated: true,
+              login: "velumix",
+              name: "Velumix",
+              avatar_url: "https://avatars.githubusercontent.com/u/159978288?v=4",
+              html_url: "https://github.com/velumix",
+              auth_source: "pat",
+              scopes: ["repo", "user"],
+              public_repos: 28,
+              followers: 1,
+              following: 0,
+            };
+          }
+          if (cmd === "github_clear_pat") {
+            return null;
           }
           if (cmd === "kanban_request") {
             const key = `qa-board:${args.workspace}`;

@@ -101,10 +101,41 @@ test("SDK package carries public publish metadata and the guard blocks unlicense
   writeFileSync(unlicensed + "/package.json", JSON.stringify({ name: "fixture" }));
   assert.notEqual(runGuard(unlicensed).status, 0);
 
-  // Approved license field plus LICENSE file: allowed.
-  const licensed = path.join(dir, "licensed");
-  mkdirSync(licensed, { recursive: true });
-  writeFileSync(licensed + "/package.json", JSON.stringify({ name: "fixture", license: "SEE LICENSE IN LICENSE" }));
-  writeFileSync(licensed + "/LICENSE", "approved SDK license text");
-  assert.equal(runGuard(licensed).status, 0);
+  const makeFixture = (name, manifest, licenseText) => {
+    const fixture = path.join(dir, name);
+    mkdirSync(fixture, { recursive: true });
+    writeFileSync(fixture + "/package.json", JSON.stringify(manifest));
+    if (licenseText !== null) writeFileSync(fixture + "/LICENSE", licenseText);
+    return fixture;
+  };
+
+  // License field that does not match the recorded sdkLicense decision: blocked.
+  assert.notEqual(
+    runGuard(makeFixture("mismatched", { name: "fixture", license: "MIT" }, "approved SDK license text")).status,
+    0,
+  );
+
+  // Matching license but missing LICENSE file: blocked.
+  assert.notEqual(
+    runGuard(makeFixture("no-file", { name: "fixture", license: "Apache-2.0" }, null)).status,
+    0,
+  );
+
+  // Matching license but LICENSE text does not match: blocked.
+  assert.notEqual(
+    runGuard(makeFixture("wrong-text", { name: "fixture", license: "Apache-2.0" }, "approved SDK license text")).status,
+    0,
+  );
+
+  // Recorded sdkLicense plus matching "license" field and LICENSE text: allowed.
+  assert.equal(
+    runGuard(
+      makeFixture(
+        "licensed",
+        { name: "fixture", license: "Apache-2.0" },
+        "Licensed under the Apache License, Version 2.0",
+      ),
+    ).status,
+    0,
+  );
 });

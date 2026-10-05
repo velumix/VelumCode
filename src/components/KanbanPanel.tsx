@@ -398,7 +398,8 @@ export default function KanbanPanel({
                       const picked = bots.find(
                         (b) => b.id === editor.assignment!.bot_id,
                       );
-                      if (!picked) return "disabled";
+                      // A removed bot needs attention, not the muted disabled tint.
+                      if (!picked) return "error";
                       return picked.enabled ? "idle" : "disabled";
                     })()}
                   />
@@ -752,7 +753,8 @@ export default function KanbanPanel({
                                     const assignee = bots.find(
                                       (b) => b.id === card.assignment!.bot_id,
                                     );
-                                    if (!assignee) return "disabled";
+                                    // A removed bot needs attention, not the muted disabled tint.
+                                    if (!assignee) return "error";
                                     return assignee.enabled
                                       ? "idle"
                                       : "disabled";

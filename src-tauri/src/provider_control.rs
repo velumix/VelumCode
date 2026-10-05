@@ -2,8 +2,9 @@ use crate::{codex_control, events::AgentEvent, interactions::Broker, muse_msp};
 use std::sync::Arc;
 
 pub enum Client {
-    Muse(muse_msp::Client),
-    Codex(codex_control::Client),
+    // Boxed: both clients are several hundred bytes and the enum travels by value.
+    Muse(Box<muse_msp::Client>),
+    Codex(Box<codex_control::Client>),
 }
 impl Client {
     pub fn broker(&self) -> &Arc<Broker> {

@@ -25,6 +25,8 @@ import { progressMessage, type ProviderProgress } from '../providerProgress';
 import { mergeUsage, type UsageSnapshot } from '../usage';
 import { ClientMeasurement, type HostMeasurement } from '../turnMeasurement';
 import { attachment, chatSnapshot, type AccessCheck, type Diagnostics } from '../context';
+import SessionDashboard from './SessionDashboard';
+import { parseStatus } from './gitStatus';
 const ContextPanel = lazy(() => import('./ContextPanel'));
 
 export type AgentStatus = (
@@ -121,6 +123,31 @@ function boundedOutput(text: string): string {
 
 function asString(v: unknown): string | undefined {
   return typeof v === "string" ? v : undefined;
+}
+
+function turnTouchedFiles(blocks: Block[], assistantId: number): string[] {
+  const idx = blocks.findIndex((b) => b.id === assistantId);
+  if (idx === -1) return [];
+  let startIdx = idx - 1;
+  while (startIdx >= 0 && blocks[startIdx]?.kind !== "user") {
+    startIdx--;
+  }
+  const files = new Set<string>();
+  for (let i = Math.max(0, startIdx); i < idx; i++) {
+    const b = blocks[i];
+    if (b && b.kind === "tool") {
+      const toolText = `${b.name} ${b.output} ${b.result || ""}`;
+      const matches = toolText.match(/[a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]{1,8}/g);
+      if (matches) {
+        for (const m of matches) {
+          if (!m.includes("http") && !m.endsWith(".jsonl") && (m.includes("/") || m.includes("\\") || m.includes("."))) {
+            files.add(m.trim());
+          }
+        }
+      }
+    }
+  }
+  return Array.from(files).slice(0, 4);
 }
 
 function SendIcon() {
@@ -298,6 +325,37 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
   const [draftError, setDraftError] = useState(false);
   const [correction, setCorrection] = useState<{id:number;answer:string}|null>(null);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [chatMode, setChatMode] = useState<"stream" | "split" | "dashboard">(() => {
+    try {
+      const saved = localStorage.getItem("velum:chat-mode");
+      if (saved === "stream" || saved === "split" || saved === "dashboard") return saved;
+    } catch {}
+    return "stream";
+  });
+  const [selectedDiffFile, setSelectedDiffFile] = useState<string | null>(null);
+  const [gitChangedCount, setGitChangedCount] = useState(0);
+
+  useEffect(() => {
+    if (!effective) {
+      setGitChangedCount(0);
+      return;
+    }
+    let mounted = true;
+    void invoke<{ status: string }>("git_state", { workspace: effective })
+      .then((state) => {
+        if (mounted && state?.status) {
+          const parsed = parseStatus(state.status);
+          setGitChangedCount(parsed.files.length);
+        }
+      })
+      .catch(() => {
+        if (mounted) setGitChangedCount(0);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [effective, running, blocks.length]);
+
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashIdx, setSlashIdx] = useState(0);
   const slashMatches = useMemo(() => {
@@ -922,74 +980,208 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
 
   return (
     <div className={active ? "chat-wrap" : "chat-wrap hidden"}>
-      <div ref={scrollRef} className="chat-scroll" onScroll={onScroll}>
-        {blocks.length === 0 && interactions.requests.length === 0 && (
-          <div className="chat-empty">
-            <div className="welcome-mark">{bot?<BotAvatar bot={bot} size={62} status={running ? "working" : "idle"}/>:<VelumMark size={62}/>}</div>
-            <span className="welcome-eyebrow">From an idea to something real</span>
-            <h2>{bot?`${bot.name}, ready to help.`:'What are we building?'}</h2>
-            <p>Describe what you want to make. Or choose a starting point and make the prompt your own.</p>
-            <div className="chat-starters">
-              {STARTERS.map((s) => (
-                <button
-                  key={s.label}
-                  type="button"
-                  className="starter-btn"
-                  disabled={!ready || running || applying || (input ? input.length + 2 + s.prompt.length : s.prompt.length) > 64000}
-                  onClick={() => { const next = inputRef.current ? `${inputRef.current}\n\n${s.prompt}` : s.prompt; if(next.length > 64000) return; inputRef.current=next; setInput(next); setHistIdx(null); composerRef.current?.focus(); }}
-                >
-                  <span className="starter-icon"><Icon name={s.icon} size={21} /></span>
-                  <strong>{s.label}</strong>
-                  <span>{s.description}</span>
-                  <Icon name="arrow" className="starter-arrow" size={15} />
-                </button>
-              ))}
-            </div>
+      {/* Session Header Bar */}
+      <div className="chat-view-header">
+        <div className="chat-view-header-left">
+          <span className="cv-bot-pill">
+            {bot ? <BotAvatar bot={bot} size={20} status={running ? "working" : "idle"} /> : <VelumMark size={20} />}
+            <strong>{bot?.name || providerNames[provider]}</strong>
+            <span className={`cv-status-dot ${running ? "running" : "idle"}`} />
+            <span className="cv-status-text">{running ? (activity || "Working…") : "Ready"}</span>
+          </span>
+          {effective && (
+            <span className="cv-project-pill" title={effective}>
+              <Icon name="folder" size={13} />
+              <span>{projectName(effective)}</span>
+            </span>
+          )}
+        </div>
+
+        <div className="chat-view-header-right">
+          {gitChangedCount > 0 && (
+            <button
+              type="button"
+              className="cv-diff-chip"
+              title="Inspect changed files and live diffs"
+              onClick={() => {
+                setChatMode("split");
+                try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
+              }}
+            >
+              <Icon name="diff" size={13} />
+              <span>{gitChangedCount} {gitChangedCount === 1 ? "file" : "files"} changed</span>
+            </button>
+          )}
+
+          <div className="cv-mode-toggle" role="group" aria-label="Conversation view mode">
+            <button
+              type="button"
+              className={chatMode === "stream" ? "active" : ""}
+              onClick={() => {
+                setChatMode("stream");
+                try { localStorage.setItem("velum:chat-mode", "stream"); } catch {}
+              }}
+              title="Stream mode: Focused dialogue stream"
+            >
+              <Icon name="chat" size={13} />
+              <span>Stream</span>
+            </button>
+            <button
+              type="button"
+              className={chatMode === "split" ? "active" : ""}
+              onClick={() => {
+                setChatMode("split");
+                try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
+              }}
+              title="Split Studio: Dialogue + Live Mission Dashboard & Diff"
+            >
+              <Icon name="split" size={13} />
+              <span>Split</span>
+            </button>
+            <button
+              type="button"
+              className={chatMode === "dashboard" ? "active" : ""}
+              onClick={() => {
+                setChatMode("dashboard");
+                try { localStorage.setItem("velum:chat-mode", "dashboard"); } catch {}
+              }}
+              title="Dashboard mode: Full-screen Mission Control & Diff inspector"
+            >
+              <Icon name="board" size={13} />
+              <span>Dashboard</span>
+            </button>
           </div>
-        )}
-        {groupActivity(blocks, settings.groupActivity).map((row) => {
-          if (row.kind === 'activity_group') {
-            const tools = row.items.filter((item): item is Extract<Block,{kind:'tool'}> => item.kind === 'tool');
-            const current = lastMatch(tools,tool=>statusTone(tool.status)==='busy');
-            return <AgentActivity key={`activity-${row.id}`} count={tools.length} current={current ? `${friendlyTool(current.name)} in progress` : ''} failed={tools.some(tool=>['failed','blocked','rejected'].includes(tool.status))} stopped={tools.some(tool=>tool.status==='cancelled')} busy={!!current}>{tools.map(tool=><ToolBlock key={tool.id} block={tool}/>)}</AgentActivity>;
-          }
-          const b = row.block;
-          switch (b.kind) {
-            case "user":
-              return (
-                <div key={b.id} className="msg user">
-                  <div className="message-header">
-                    <span className="message-avatar user-avatar">Y</span>
-                    <div className="message-author"><strong>You</strong>{b.notSent && <span className="message-unsent">Not sent</span>}</div>
-                    <CopyButton text={b.text} />
-                    <button type="button" className="memory-usage" aria-label="Remember this message" onClick={()=>onRemember(b.text)}><Icon name="memory" size={15}/></button>
-                  </div>
-                  <pre>{b.text}</pre>
+        </div>
+      </div>
+
+      <div className={`chat-main-area mode-${chatMode}`}>
+        <div className="chat-stream-column">
+          <div ref={scrollRef} className="chat-scroll" onScroll={onScroll}>
+            {blocks.length === 0 && interactions.requests.length === 0 && (
+              <div className="chat-empty">
+                <div className="welcome-mark">{bot?<BotAvatar bot={bot} size={62} status={running ? "working" : "idle"}/>:<VelumMark size={62}/>}</div>
+                <span className="welcome-eyebrow">From an idea to something real</span>
+                <h2>{bot?`${bot.name}, ready to help.`:'What are we building?'}</h2>
+                <p>Describe what you want to make. Or choose a starting point and make the prompt your own.</p>
+                <div className="chat-starters">
+                  {STARTERS.map((s) => (
+                    <button
+                      key={s.label}
+                      type="button"
+                      className="starter-btn"
+                      disabled={!ready || running || applying || (input ? input.length + 2 + s.prompt.length : s.prompt.length) > 64000}
+                      onClick={() => { const next = inputRef.current ? `${inputRef.current}\n\n${s.prompt}` : s.prompt; if(next.length > 64000) return; inputRef.current=next; setInput(next); setHistIdx(null); composerRef.current?.focus(); }}
+                    >
+                      <span className="starter-icon"><Icon name={s.icon} size={21} /></span>
+                      <strong>{s.label}</strong>
+                      <span>{s.description}</span>
+                      <Icon name="arrow" className="starter-arrow" size={15} />
+                    </button>
+                  ))}
                 </div>
-              );
-            case "assistant":
-              return (
-                <div key={b.id} className="msg assistant">
-                  <div className="message-header">
-                    <span className="message-avatar muse-avatar">{bot?<BotAvatar bot={bot} size={38} status={running ? "working" : "idle"}/>:<VelumMark size={38}/>}</span>
-                    <div className="message-author"><strong>{bot?.name||providerNames[provider]}<span className="assistant-badge">{bot?providerNames[provider]:'AI'}</span></strong></div>
-                    <CopyButton text={b.text} />
-                    <button type="button" className="memory-usage" aria-label="Remember this answer" onClick={()=>onRemember(b.text)}><Icon name="memory" size={15}/></button>
-                  </div>
-                  <Markdown text={b.text} />
-                  {!b.open && <div className={`response-actions${lastAssistant?.id===b.id ? ' latest-response' : ''}`}><button type="button" onClick={()=>setCorrection({id:b.id,answer:b.text})}><Icon name="edit" size={14}/>Correct response</button>{lastAssistant?.id===b.id && !running && lastStatusRef.current.kind==='done' && <span className="response-finish"><Icon name="check" size={12}/>Ready for your next idea</span>}</div>}
-                  {correction?.id === b.id && <CorrectionComposer running={running} disabled={!ready || applying} owner={bot?.name} onClose={closeCorrection} remember={rememberLesson} submit={async (text,lesson)=>{
-                    const nativeId = nativeIdRef.current;
-                    if (!await sendText(correctionPrompt(b.text,text),true)) throw new Error('Correction was not sent. Your edits are still here; try again when ready.');
-                    let notice: string | undefined;
-                    if (lesson) {
-                      if (nativeId !== nativeIdRef.current) return {sent:true,remembered:false,error:'Correction sent. The conversation changed; save the lesson in Memory for the correct project.'};
-                      try { notice = await rememberLesson(lesson); } catch(error) { return {sent:true,remembered:false,error:`Correction sent. The lesson could not be saved: ${String(error)}`}; }
-                    }
-                    return {sent:true,remembered:!!lesson,notice};
-                  }}/>}
-                </div>
-              );
+              </div>
+            )}
+            {groupActivity(blocks, settings.groupActivity).map((row) => {
+              if (row.kind === 'activity_group') {
+                const tools = row.items.filter((item): item is Extract<Block,{kind:'tool'}> => item.kind === 'tool');
+                const current = lastMatch(tools,tool=>statusTone(tool.status)==='busy');
+                return (
+                  <AgentActivity
+                    key={`activity-${row.id}`}
+                    count={tools.length}
+                    current={current ? `${friendlyTool(current.name)} in progress` : ''}
+                    failed={tools.some(tool=>['failed','blocked','rejected'].includes(tool.status))}
+                    stopped={tools.some(tool=>tool.status==='cancelled')}
+                    busy={!!current}
+                    onOpenDashboard={() => {
+                      setChatMode("split");
+                      try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
+                    }}
+                  >
+                    {tools.map(tool=><ToolBlock key={tool.id} block={tool}/>)}
+                  </AgentActivity>
+                );
+              }
+              const b = row.block;
+              switch (b.kind) {
+                case "user":
+                  return (
+                    <div key={b.id} className="msg user">
+                      <div className="message-header">
+                        <span className="message-avatar user-avatar">Y</span>
+                        <div className="message-author"><strong>You</strong>{b.notSent && <span className="message-unsent">Not sent</span>}</div>
+                        <CopyButton text={b.text} />
+                        <button type="button" className="memory-usage" aria-label="Remember this message" onClick={()=>onRemember(b.text)}><Icon name="memory" size={15}/></button>
+                      </div>
+                      <pre>{b.text}</pre>
+                    </div>
+                  );
+                case "assistant": {
+                  const touched = turnTouchedFiles(blocks, b.id);
+                  return (
+                    <div key={b.id} className="msg assistant">
+                      <div className="message-header">
+                        <span className="message-avatar muse-avatar">{bot?<BotAvatar bot={bot} size={38} status={running ? "working" : "idle"}/>:<VelumMark size={38}/>}</span>
+                        <div className="message-author"><strong>{bot?.name||providerNames[provider]}<span className="assistant-badge">{bot?providerNames[provider]:'AI'}</span></strong></div>
+                        <CopyButton text={b.text} />
+                        <button type="button" className="memory-usage" aria-label="Remember this answer" onClick={()=>onRemember(b.text)}><Icon name="memory" size={15}/></button>
+                      </div>
+                      <Markdown text={b.text} />
+                      {!b.open && <div className={`response-actions${lastAssistant?.id===b.id ? ' latest-response' : ''}`}><button type="button" onClick={()=>setCorrection({id:b.id,answer:b.text})}><Icon name="edit" size={14}/>Correct response</button>{lastAssistant?.id===b.id && !running && lastStatusRef.current.kind==='done' && <span className="response-finish"><Icon name="check" size={12}/>Ready for your next idea</span>}</div>}
+                      {!b.open && (
+                        <div className="turn-scorecard">
+                          <div className="turn-scorecard-status">
+                            <Icon name="check" size={13} />
+                            <span>Turn complete</span>
+                          </div>
+                          {touched.length > 0 ? (
+                            <div className="turn-touched-files">
+                              <span style={{ fontSize: "10px", color: "var(--muted)" }}>Touched files:</span>
+                              {touched.map((file) => (
+                                <button
+                                  key={file}
+                                  type="button"
+                                  className="turn-diff-pill"
+                                  title={`Inspect diff for ${file} in Mission Dashboard`}
+                                  onClick={() => {
+                                    setSelectedDiffFile(file);
+                                    setChatMode("split");
+                                    try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
+                                  }}
+                                >
+                                  <Icon name="diff" size={11} />
+                                  <span>{file.split(/[\\/]/).pop()}</span>
+                                </button>
+                              ))}
+                            </div>
+                          ) : gitChangedCount > 0 ? (
+                            <button
+                              type="button"
+                              className="turn-diff-pill"
+                              onClick={() => {
+                                setChatMode("split");
+                                try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
+                              }}
+                            >
+                              <Icon name="diff" size={11} />
+                              <span>View {gitChangedCount} changed {gitChangedCount === 1 ? 'file' : 'files'}</span>
+                            </button>
+                          ) : null}
+                        </div>
+                      )}
+                      {correction?.id === b.id && <CorrectionComposer running={running} disabled={!ready || applying} owner={bot?.name} onClose={closeCorrection} remember={rememberLesson} submit={async (text,lesson)=>{
+                        const nativeId = nativeIdRef.current;
+                        if (!await sendText(correctionPrompt(b.text,text),true)) throw new Error('Correction was not sent. Your edits are still here; try again when ready.');
+                        let notice: string | undefined;
+                        if (lesson) {
+                          if (nativeId !== nativeIdRef.current) return {sent:true,remembered:false,error:'Correction sent. The conversation changed; save the lesson in Memory for the correct project.'};
+                          try { notice = await rememberLesson(lesson); } catch(error) { return {sent:true,remembered:false,error:`Correction sent. The lesson could not be saved: ${String(error)}`}; }
+                        }
+                        return {sent:true,remembered:!!lesson,notice};
+                      }}/>}
+                    </div>
+                  );
+                }
             case "tool":
               return <ToolBlock key={b.id} block={b} />;
             case "notice":
@@ -1231,6 +1423,38 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
       </div>
       {workspaceEditorOpen && blocks.some(b=>b.kind==='assistant') && <p className="workspace-editor-hint">Applying a different project starts a fresh conversation in this tab.</p>}
       </div>
+      </div>
+
+      {chatMode !== "stream" && (
+        <div className="chat-dashboard-column">
+          <SessionDashboard
+            workspace={effective}
+            bot={bot}
+            provider={provider}
+            options={options}
+            running={running}
+            activity={activity}
+            todos={todos}
+            blocks={blocks}
+            usage={usage}
+            memoryUsage={memoryUsage}
+            selectedDiffFile={selectedDiffFile}
+            onSelectDiffFile={setSelectedDiffFile}
+            onClose={() => {
+              setChatMode("stream");
+              try { localStorage.setItem("velum:chat-mode", "stream"); } catch {}
+            }}
+            onInsertDraft={(text) => {
+              const next = inputRef.current ? `${inputRef.current}\n\n${text}` : text;
+              if (next.length > 64000) return;
+              inputRef.current = next;
+              setInput(next);
+              composerRef.current?.focus();
+            }}
+          />
+        </div>
+      )}
+    </div>
       {contextSnapshot !== null && active && <Suspense fallback={null}><ContextPanel key={`${nativeIdRef.current}:${yolo}`} snapshot={contextSnapshot} load={async () => { const report = await invoke<Diagnostics>('app_diagnostics', { workspace: effective, id: nativeIdRef.current }); return {...report, client_measurement:clientMeasurementRef.current.report(report.turn_measurement)}; }} check={() => invoke<AccessCheck>('workspace_check', { workspace: effective, write: true, id: nativeIdRef.current })} agentBusy={running || queue.items.length > 0 || !ready} checkAgent={async () => {
         if (!nativeIdRef.current || runningRef.current || queueRef.current.items.length) throw new Error('Finish or clear queued messages before testing agent access.');
         runningRef.current = true; setRunning(true); setActivity('Checking workspace access'); setStatus({kind:'running',detail:'Checking workspace access'});

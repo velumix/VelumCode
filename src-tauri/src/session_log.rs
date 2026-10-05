@@ -116,9 +116,7 @@ impl SessionLog {
             return None;
         }
         let mut logs = self.0.lock().unwrap();
-        let Some(log) = logs.get_mut(id) else {
-            return None;
-        };
+        let log = logs.get_mut(id)?;
         match event {
             AgentEvent::QueueState { queue, running } => {
                 log.summary.queue = queue.clone();

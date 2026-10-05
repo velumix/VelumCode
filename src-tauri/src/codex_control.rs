@@ -67,6 +67,8 @@ fn choice(id: &str, label: &str, scope: &str, decision: &str) -> interactions::C
 }
 
 impl Client {
+    // Mirrors the Muse constructor's positional shape; grouping would hide the parity.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         input: ChildStdin,
         broker: Arc<Broker>,

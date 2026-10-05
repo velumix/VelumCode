@@ -233,18 +233,16 @@ impl View {
                         text: truncate(fresh),
                     });
                 }
-                if terminal || is_terminal_status(&status) {
-                    if !state.ended {
-                        state.ended = true;
-                        let reason = str_field(item, "failureReason");
-                        out.push(AgentEvent::ToolEnd {
-                            task_id: item_id.clone(),
-                            status: tool_status(&status),
-                            reason,
-                        });
-                        // The output already arrived as deltas; repeating it
-                        // as ToolResult duplicates the phone transcript.
-                    }
+                if (terminal || is_terminal_status(&status)) && !state.ended {
+                    state.ended = true;
+                    let reason = str_field(item, "failureReason");
+                    out.push(AgentEvent::ToolEnd {
+                        task_id: item_id.clone(),
+                        status: tool_status(&status),
+                        reason,
+                    });
+                    // The output already arrived as deltas; repeating it
+                    // as ToolResult duplicates the phone transcript.
                 }
             }
             "userShell" => {
@@ -273,29 +271,27 @@ impl View {
                         text: truncate(fresh),
                     });
                 }
-                if terminal || is_terminal_status(&status) {
-                    if !state.ended {
-                        state.ended = true;
-                        let mut reason: Option<String> = None;
-                        match (
-                            item.get("exitCode").and_then(Value::as_i64),
-                            item.get("exitSignal").and_then(Value::as_u64),
-                        ) {
-                            (Some(0), _) => {}
-                            (Some(code), _) => {
-                                reason = Some(format!("exit code {code}"));
-                            }
-                            (None, Some(sig)) => {
-                                reason = Some(format!("signal {sig}"));
-                            }
-                            _ => {}
+                if (terminal || is_terminal_status(&status)) && !state.ended {
+                    state.ended = true;
+                    let mut reason: Option<String> = None;
+                    match (
+                        item.get("exitCode").and_then(Value::as_i64),
+                        item.get("exitSignal").and_then(Value::as_u64),
+                    ) {
+                        (Some(0), _) => {}
+                        (Some(code), _) => {
+                            reason = Some(format!("exit code {code}"));
                         }
-                        out.push(AgentEvent::ToolEnd {
-                            task_id: item_id.clone(),
-                            status: tool_status(&status),
-                            reason,
-                        });
+                        (None, Some(sig)) => {
+                            reason = Some(format!("signal {sig}"));
+                        }
+                        _ => {}
                     }
+                    out.push(AgentEvent::ToolEnd {
+                        task_id: item_id.clone(),
+                        status: tool_status(&status),
+                        reason,
+                    });
                 }
             }
             "userMessage" => {
@@ -354,37 +350,33 @@ impl View {
                 }
             }
             "workflow" => {
-                if terminal || is_terminal_status(&status) {
-                    if !state.ended {
-                        state.ended = true;
-                        let reason = item
-                            .get("message")
-                            .and_then(Value::as_str)
-                            .map(str::to_owned);
-                        out.push(AgentEvent::Notice {
-                            text: truncate(match status.as_str() {
-                                "completed" => "Workflow completed".to_owned(),
-                                _ => match reason {
-                                    Some(r) if !r.is_empty() => format!("Workflow {status}: {r}"),
-                                    _ => format!("Workflow {status}"),
-                                },
-                            }),
-                        });
-                    }
+                if (terminal || is_terminal_status(&status)) && !state.ended {
+                    state.ended = true;
+                    let reason = item
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
+                    out.push(AgentEvent::Notice {
+                        text: truncate(match status.as_str() {
+                            "completed" => "Workflow completed".to_owned(),
+                            _ => match reason {
+                                Some(r) if !r.is_empty() => format!("Workflow {status}: {r}"),
+                                _ => format!("Workflow {status}"),
+                            },
+                        }),
+                    });
                 }
             }
             "compaction" => {
-                if terminal || is_terminal_status(&status) {
-                    if !state.ended {
-                        state.ended = true;
-                        let reason = str_field(item, "reason");
-                        out.push(AgentEvent::Notice {
-                            text: match reason {
-                                Some(r) if !r.is_empty() => format!("Transcript compacted: {r}"),
-                                _ => "Transcript compacted".to_owned(),
-                            },
-                        });
-                    }
+                if (terminal || is_terminal_status(&status)) && !state.ended {
+                    state.ended = true;
+                    let reason = str_field(item, "reason");
+                    out.push(AgentEvent::Notice {
+                        text: match reason {
+                            Some(r) if !r.is_empty() => format!("Transcript compacted: {r}"),
+                            _ => "Transcript compacted".to_owned(),
+                        },
+                    });
                 }
             }
             "reminderChild" => {

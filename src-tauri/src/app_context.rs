@@ -49,6 +49,7 @@ pub async fn git_state(workspace: String) -> Result<Value, String> {
             .unwrap_or(json!({"commits": [], "truncated": false}));
         let sync = crate::workspace_tools::git_sync(root)
             .unwrap_or(json!({"upstream": "", "ahead": 0, "behind": 0}));
+        let remote_url = crate::workspace_tools::git_remote_url(root).ok().flatten();
         Ok(json!({
             "root": branches["root"],
             "current": branches["current"],
@@ -61,6 +62,7 @@ pub async fn git_state(workspace: String) -> Result<Value, String> {
             "upstream": sync["upstream"],
             "ahead": sync["ahead"],
             "behind": sync["behind"],
+            "remote_url": remote_url,
             "trust": "Selected repository only, for this command.",
             "global_config_changed": false,
         }))

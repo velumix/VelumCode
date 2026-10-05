@@ -6,6 +6,7 @@ mod child_process;
 mod codex_control;
 mod desktop;
 mod events;
+mod github;
 mod history;
 mod interactions;
 mod kanban;
@@ -89,6 +90,7 @@ pub fn run() {
             preferences::setup(app)?;
             tool_bridge::setup(app)?;
             remote::setup(app)?;
+            github::setup(app.handle())?;
             Ok(())
         })
         .on_window_event(desktop::close_to_tray)
@@ -167,7 +169,15 @@ pub fn run() {
             updates::updates_set_automatic,
             updates::updates_check,
             updates::updates_download,
-            updates::updates_install
+            updates::updates_install,
+            github::github_auth_status,
+            github::github_save_pat,
+            github::github_clear_pat,
+            github::github_user_profile,
+            github::github_repo_details,
+            github::github_repo_pulls,
+            github::github_repo_issues,
+            github::github_create_issue
         ])
         .build(context)
         .expect("error while building tauri application")

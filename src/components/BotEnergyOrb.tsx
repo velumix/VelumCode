@@ -157,12 +157,43 @@ export default function BotEnergyOrb({
       return;
     }
     draw(1.2);
-    const loop = (now: number) => {
+    // One orb per bot across panels, tabs, chat and kanban adds up: only
+    // animate while the canvas is on screen and the page is visible.
+    let running = false;
+    const tick = (now: number) => {
+      if (!running) return;
       draw(now / 1000 + 1.2);
-      frame = requestAnimationFrame(loop);
+      frame = requestAnimationFrame(tick);
     };
-    frame = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(frame);
+    const start = () => {
+      if (running) return;
+      running = true;
+      frame = requestAnimationFrame(tick);
+    };
+    const stop = () => {
+      running = false;
+      cancelAnimationFrame(frame);
+    };
+    let onScreen = true;
+    const maybeStart = () => {
+      if (onScreen && document.visibilityState === "visible") start();
+      else stop();
+    };
+    const observer =
+      typeof IntersectionObserver === "undefined"
+        ? null
+        : new IntersectionObserver((entries) => {
+            onScreen = entries[0]?.isIntersecting !== false;
+            maybeStart();
+          });
+    if (observer) observer.observe(canvas);
+    document.addEventListener("visibilitychange", maybeStart);
+    maybeStart();
+    return () => {
+      observer?.disconnect();
+      document.removeEventListener("visibilitychange", maybeStart);
+      stop();
+    };
   }, [color, size, status, seed]);
 
   return (

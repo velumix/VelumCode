@@ -19,9 +19,27 @@ test("Git panel shows branches, status and per-file diff without editing", async
   await expect(page.getByLabel("Diff of src/App.tsx")).toContainText("+new");
   await expect(page.getByLabel("Find in diff")).toBeVisible();
   await page.getByLabel("Find in diff").fill("new");
-  await expect(page.getByText(/lines match/)).toBeVisible();
+  await expect(page.getByText("1 of 2 changed lines match")).toBeVisible();
   await expect(page.getByText("never changes files",{exact:false})).toBeVisible();
   expect((await new AxeBuilder({page}).include(".git-panel").analyze()).violations).toEqual([]);
   await page.getByRole("button",{name:"Close Git panel",exact:true}).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+test("Git panel explains status and renders proper diffs with true line numbers", async ({page}) => {
+  await boot(page);
+  await page.getByRole("button",{name:"Git branches and diff",exact:true}).click();
+  await expect(page.getByText("On branch main, tracking origin/main")).toBeVisible();
+  await expect(page.getByText("1 unstaged")).toBeVisible();
+  await expect(page.getByText("1 untracked")).toBeVisible();
+  await expect(page.getByRole("button",{name:/src\/App\.tsx/})).toContainText("Modified (unstaged)");
+  await expect(page.getByRole("button",{name:/GitPanel\.tsx/})).toContainText("Untracked");
+  await page.getByRole("button",{name:/src\/App\.tsx/}).click();
+  const diff = page.getByLabel("Diff of src/App.tsx");
+  await expect(diff.locator(".git-diff-hunk")).toContainText("@@ -1 +1 @@");
+  await expect(diff.locator(".git-diff-del .git-diff-old")).toHaveText("1");
+  await expect(diff.locator(".git-diff-add .git-diff-new")).toHaveText("1");
+  await page.getByRole("button",{name:/GitPanel\.tsx/}).click();
+  await expect(page.getByText("Untracked — new file")).toBeVisible();
+  await expect(page.getByLabel("Diff of src/components/GitPanel.tsx")).toContainText("+line one");
+  await expect(page.getByLabel("Diff of src/components/GitPanel.tsx").locator(".git-diff-add .git-diff-new").first()).toHaveText("1");
 });

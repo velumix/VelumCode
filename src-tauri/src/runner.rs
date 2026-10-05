@@ -1165,14 +1165,17 @@ fn spawn_reader(
                 }
                 let snapshot = client.broker().snapshot();
                 if snapshot.revision != interaction_revision {
-                    let new_request = snapshot
+                    let mut new_request = false;
+                    for request in snapshot
                         .requests
                         .iter()
                         .filter(|request| request.status == "pending")
-                        .fold(false, |new, request| {
-                            interaction_notified.insert((request.id.clone(), request.revision))
-                                || new
-                        });
+                    {
+                        // Mark every pending request, not just the first new
+                        // one: `any` would short-circuit and re-notify later.
+                        new_request |=
+                            interaction_notified.insert((request.id.clone(), request.revision));
+                    }
                     if new_request {
                         crate::desktop::notify_turn(&app, &session.tab_id, "awaiting_review");
                     }
@@ -1202,7 +1205,7 @@ fn spawn_reader(
             match supervisor.observe(
                 std::time::Instant::now(),
                 batch.activity || waiting,
-                terminal.is_some() && control.as_ref().map_or(true, |client| client.settling()),
+                terminal.is_some() && control.as_ref().is_none_or(|client| client.settling()),
                 status,
                 output.closed(),
             ) {
@@ -2195,7 +2198,7 @@ fn send_inner(
             .ok_or("Could not capture the provider's control input.")?;
         let (broker, controls) = crate::interactions::Broker::new(turn_id.clone());
         let client = if provider == Provider::Muse {
-            crate::provider_control::Client::Muse(crate::muse_msp::Client::new(
+            let muse = crate::muse_msp::Client::new(
                 input,
                 broker.clone(),
                 controls,
@@ -2205,9 +2208,10 @@ fn send_inner(
                 prompt.clone(),
                 options.clone(),
                 yolo,
-            )?)
+            )?;
+            crate::provider_control::Client::Muse(Box::new(muse))
         } else {
-            crate::provider_control::Client::Codex(crate::codex_control::Client::new(
+            let codex = crate::codex_control::Client::new(
                 input,
                 broker.clone(),
                 controls,
@@ -2217,9 +2221,11 @@ fn send_inner(
                 options.clone(),
                 yolo,
                 usage_baseline.clone(),
-            )?)
+            )?;
+            crate::provider_control::Client::Codex(Box::new(codex))
         };
         *session.interactions.lock().unwrap() = Some(broker);
+
         Some(client)
     } else {
         *session.interactions.lock().unwrap() = None;

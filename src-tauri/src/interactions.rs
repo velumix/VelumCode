@@ -922,7 +922,7 @@ mod tests {
         let cases = [
             (
                 Some("   ".to_owned()),
-                vec!["a".to_owned()].into(),
+                vec!["a".to_owned()],
                 "blank with selection",
             ),
             (Some("   ".to_owned()), Vec::new(), "blank"),

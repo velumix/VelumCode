@@ -178,7 +178,10 @@ fn run_git(
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
     let out = std::thread::spawn(move || read_bounded(stdout, cap));
-    let err = std::thread::spawn(move || read_bounded(stderr, 0));
+    // Retain a short stderr excerpt so failures name the cause (unknown
+    // revision, locked index, corrupt repo) instead of only an exit code.
+    // Stderr never carries config contents; only Git's own diagnostics.
+    let err = std::thread::spawn(move || read_bounded(stderr, 1024));
     let started = std::time::Instant::now();
     let status = loop {
         match child.try_wait() {
@@ -200,15 +203,33 @@ fn run_git(
     let output = out
         .join()
         .map_err(|_| format!("Cannot collect Git {operation}."))??;
-    let _ = err.join();
+    let detail = err
+        .join()
+        .map(|r| r.unwrap_or_default())
+        .unwrap_or_default();
     let status = status.ok_or(format!(
         "Git {operation} timed out or could not be monitored; no Git configuration was changed."
     ))?;
     if !status.success() {
-        return Err(format!(
-            "Git {operation} failed (exit {:?}); no Git configuration was changed.",
-            status.code()
-        ));
+        let reason: String = String::from_utf8_lossy(&detail.0)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .take(3)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let reason = reason.chars().take(300).collect::<String>();
+        return Err(if reason.is_empty() {
+            format!(
+                "Git {operation} failed (exit {:?}); no Git configuration was changed.",
+                status.code()
+            )
+        } else {
+            format!(
+                "Git {operation} failed (exit {:?}): {reason}; no Git configuration was changed.",
+                status.code()
+            )
+        });
     }
     let text = String::from_utf8_lossy(&output.0);
     let mut end = text.len().min(cap);
@@ -323,9 +344,75 @@ fn check_diff_path(relative: &str) -> Result<PathBuf, String> {
     Ok(path.to_path_buf())
 }
 
+/// Unified diff of an untracked working-tree file, synthesized from disk
+/// because `git diff <base>` is blind to files outside the index. Bounded to
+/// `cap` bytes; longer files are cut with `truncated` set. Binary files keep
+/// Git's own `Binary files ... differ` phrasing instead of dumped bytes.
+fn untracked_diff(repository: &Path, relative: &str, cap: usize) -> Option<(String, bool)> {
+    let disk = repository.join(Path::new(relative));
+    let actual = fs::canonicalize(&disk).ok()?;
+    if !actual.starts_with(repository) || !actual.is_file() {
+        return None;
+    }
+    // Only synthesize for files Git really doesn't track. A tracked file with
+    // no diff against `base` is unmodified, never a whole new file.
+    let tracked = run_git(
+        "diff",
+        repository,
+        &["ls-files", "--error-unmatch", "--", relative],
+        &[],
+        256,
+    )
+    .is_ok();
+    if tracked {
+        return None;
+    }
+    let file = fs::File::open(&actual).ok()?;
+    let mut bytes = Vec::new();
+    file.take(cap as u64 + 1).read_to_end(&mut bytes).ok()?;
+    let truncated = bytes.len() > cap;
+    bytes.truncate(cap);
+    let display = relative.replace('\\', "/");
+    if bytes.contains(&0) {
+        return Some((
+            format!(
+                "diff --git a/{display} b/{display}\nnew file mode 100644\nBinary files /dev/null and b/{display} differ\n"
+            ),
+            truncated,
+        ));
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    // Keep line endings out of the added lines so the diff stays parseable.
+    let lines: Vec<&str> = text.lines().collect();
+    let mut out = format!(
+        "diff --git a/{display} b/{display}\nnew file mode 100644\n--- /dev/null\n+++ b/{display}\n@@ -0,0 +1,{} @@\n",
+        lines.len().max(1)
+    );
+    for line in &lines {
+        out.push('+');
+        out.push_str(line);
+        out.push('\n');
+        if out.len() >= cap {
+            break;
+        }
+    }
+    if lines.is_empty() {
+        out.push('\n');
+    }
+    let truncated = truncated || out.len() >= cap;
+    if out.len() > cap {
+        let mut end = cap;
+        while !out.is_char_boundary(end) {
+            end -= 1;
+        }
+        out.truncate(end);
+    }
+    Some((out, truncated))
+}
+
 pub fn git_diff(root: &Path, base: &str, relative: Option<&str>) -> Result<Value, String> {
     let repository = repository_root(root).ok_or("No Git repository detected.")?;
-    let base = check_revision(base)?;
+    let base = check_revision(base)?.to_string();
     let mut paths = vec![root.to_path_buf()];
     if let Some(relative) = relative {
         if !relative.is_empty() {
@@ -334,11 +421,20 @@ pub fn git_diff(root: &Path, base: &str, relative: Option<&str>) -> Result<Value
     }
     // Without a file path this returns `--stat` for the overview; with one it
     // returns the unified diff of that file. `path` is repository-relative.
+    // `--find-renames` keeps moved files on one diff line instead of an
+    // add/delete pair with no link between them.
     let (text, truncated) = if relative.is_some_and(|r| !r.is_empty()) {
         run_git(
             "diff",
             &repository,
-            &["diff", "--no-color", "--no-ext-diff", "-U3", base],
+            &[
+                "diff",
+                "--no-color",
+                "--no-ext-diff",
+                "--find-renames",
+                "-U3",
+                &base,
+            ],
             &paths,
             24000,
         )?
@@ -346,16 +442,39 @@ pub fn git_diff(root: &Path, base: &str, relative: Option<&str>) -> Result<Value
         run_git(
             "diff",
             &repository,
-            &["diff", "--no-color", "--stat=200,200", base],
+            &[
+                "diff",
+                "--no-color",
+                "--find-renames",
+                "--stat=200,200",
+                &base,
+            ],
             &paths,
             24000,
         )?
     };
+    if relative.is_some_and(|r| !r.is_empty()) && text.trim().is_empty() {
+        let name = relative.unwrap_or("");
+        // `git diff` prints nothing for untracked files; render the new file
+        // as added lines so the panel has a proper diff to show.
+        if let Some((synthetic, cut)) = untracked_diff(&repository, name, 24000) {
+            return Ok(json!({
+                "base": base,
+                "path": name,
+                "diff": synthetic,
+                "truncated": cut,
+                "untracked": true,
+                "trust": "Selected repository only, for this command.",
+                "global_config_changed": false,
+            }));
+        }
+    }
     Ok(json!({
         "base": base,
         "path": relative.unwrap_or(""),
         "diff": text,
         "truncated": truncated,
+        "untracked": false,
         "trust": "Selected repository only, for this command.",
         "global_config_changed": false,
     }))
@@ -450,6 +569,24 @@ pub fn git_sync(root: &Path) -> Result<Value, String> {
         "ahead": numbers.next().unwrap_or(0),
         "behind": numbers.next().unwrap_or(0),
     }))
+}
+
+pub fn git_remote_url(root: &Path) -> Result<Option<String>, String> {
+    let repository = repository_root(root).ok_or("No Git repository detected.")?;
+    let (url, _) = run_git(
+        "remote",
+        &repository,
+        &["config", "--get", "remote.origin.url"],
+        &[],
+        1024,
+    )
+    .unwrap_or_default();
+    let url = url.trim().to_string();
+    if url.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(url))
+    }
 }
 
 // Drain both pipes even after the retained output is full, so a large tree
@@ -773,6 +910,71 @@ mod tests {
         let diff = file["diff"].as_str().unwrap().to_owned();
         assert!(diff.contains("+second"), "{diff}");
         assert!(!file["truncated"].as_bool().unwrap());
+    }
+    #[test]
+    fn git_diff_renders_untracked_files_as_new_file_additions() {
+        let Some(repo) = git_repo() else {
+            return;
+        };
+        fs::write(repo.0.join("fresh.txt"), "hello\nworld\n").unwrap();
+        let file = git_diff(&repo.0, "", Some("fresh.txt")).unwrap();
+        assert_eq!(file["untracked"], true);
+        let diff = file["diff"].as_str().unwrap().to_owned();
+        assert!(diff.contains("new file mode"), "{diff}");
+        assert!(diff.contains("--- /dev/null"), "{diff}");
+        assert!(diff.contains("+hello"), "{diff}");
+        assert!(diff.contains("+world"), "{diff}");
+        assert!(!file["truncated"].as_bool().unwrap());
+        // A tracked file with no changes is unmodified, never a new file.
+        let clean = git_diff(&repo.0, "", Some("note.txt")).unwrap();
+        assert_eq!(clean["untracked"], false);
+        assert!(clean["diff"].as_str().unwrap().trim().is_empty());
+    }
+    #[test]
+    fn git_diff_marks_untracked_binary_empty_and_large_files() {
+        let Some(repo) = git_repo() else {
+            return;
+        };
+        // Binary bytes stay out of the diff; Git's own phrasing is reused.
+        fs::write(repo.0.join("blob.bin"), [0u8, 1, 2, 3]).unwrap();
+        let blob = git_diff(&repo.0, "", Some("blob.bin")).unwrap();
+        assert_eq!(blob["untracked"], true);
+        let diff = blob["diff"].as_str().unwrap().to_owned();
+        assert!(diff.contains("Binary files"), "{diff}");
+        assert!(!diff.contains('\u{0}'), "{diff}");
+        // Empty files still render as a new file with no added lines.
+        fs::write(repo.0.join("empty.txt"), "").unwrap();
+        let empty = git_diff(&repo.0, "", Some("empty.txt")).unwrap();
+        assert_eq!(empty["untracked"], true);
+        let diff = empty["diff"].as_str().unwrap().to_owned();
+        assert!(diff.contains("new file mode"), "{diff}");
+        assert!(!empty["truncated"].as_bool().unwrap());
+        // Files beyond the cap are cut with `truncated` set.
+        let big: String = (0..30000).map(|i| format!("line {i}\n")).collect();
+        fs::write(repo.0.join("big.txt"), &big).unwrap();
+        let large = git_diff(&repo.0, "", Some("big.txt")).unwrap();
+        assert_eq!(large["untracked"], true);
+        assert!(large["truncated"].as_bool().unwrap());
+    }
+    #[test]
+    fn git_diff_stat_links_renames_on_one_line() {
+        let Some(repo) = git_repo() else {
+            return;
+        };
+        git(&repo.0, &["mv", "note.txt", "renamed.txt"]);
+        let stat = git_diff(&repo.0, "", None).unwrap();
+        let diff = stat["diff"].as_str().unwrap().to_owned();
+        assert!(diff.contains("=>"), "{diff}");
+        assert!(diff.contains("renamed.txt"), "{diff}");
+    }
+    #[test]
+    fn git_diff_failure_names_the_cause() {
+        let Some(repo) = git_repo() else {
+            return;
+        };
+        let error = git_diff(&repo.0, "does-not-exist-zzz", Some("note.txt")).unwrap_err();
+        assert!(error.contains("Git diff failed"), "{error}");
+        assert!(error.contains("does-not-exist-zzz"), "{error}");
     }
     #[test]
     fn git_outside_a_repository_reports_no_repo() {
