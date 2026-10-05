@@ -109,6 +109,7 @@
 @media (max-height:620px) { .app .chat-empty { padding-block:0; } .app .welcome-mark { width:48px; margin-bottom:10px; } .app .welcome-mark .velum-mark { width:42px;height:42px; } .app .chat-starters { margin-top:18px; } .app .starter-btn { padding-block:11px; } }
 @media (prefers-reduced-motion:reduce) { .activity-toggle > svg { transition:none; } }
 @media (max-height:600px) {
+  .app .chat-view-header { display: none; }
   .app .composer { padding: 12px 12px 8px; }
   .app .composer textarea { min-height: 32px; max-height: 80px; }
   .app .composer-dock { padding-top: 4px; }
