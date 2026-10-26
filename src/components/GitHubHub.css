@@ -1,4 +1,17 @@
 .github-hub {
+  --bg-surface: var(--bg);
+  --bg-surface-raised: var(--panel);
+  --bg-card: var(--raised);
+  --bg-hover: var(--hover);
+  --border-color: var(--border);
+  --text-primary: var(--text);
+  --text-secondary: var(--subtle);
+  --text-bright: var(--text);
+  --text-muted: var(--muted);
+  --accent-light: var(--accent);
+  --accent-subtle: var(--accent-dim);
+  --font-mono: var(--code-font, monospace);
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -407,12 +420,27 @@
   font-size: 0.94rem;
   font-weight: 500;
   color: var(--text-primary, #f1f5f9);
-  cursor: pointer;
 }
 
-.github-item-title:hover {
+.github-title-link {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 0.94rem;
+  font-weight: 500;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.github-title-link:hover,
+.github-title-link:focus-visible {
   color: var(--accent-light, #60a5fa);
   text-decoration: underline;
+  outline: none;
 }
 
 .github-item-sub {
@@ -642,4 +670,20 @@
 .github-row-gap {
   display: flex;
   gap: 8px;
+}
+
+@container (max-width: 560px) {
+  .github-overview-grid {
+    grid-template-columns: 1fr;
+  }
+  .github-profile-meta {
+    grid-template-columns: 1fr;
+  }
+  .github-sub-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .github-item-actions {
+    flex-wrap: wrap;
+  }
 }

@@ -61,6 +61,7 @@ export interface SessionDashboardProps {
   onInsertDraft?: (text: string) => void;
   onClose?: () => void;
   initialTab?: "diff" | "tasks" | "activity" | "telemetry" | "github";
+  requestedTab?: { tab: "diff" | "tasks" | "activity" | "telemetry" | "github"; seq: number } | null;
 }
 
 export default function SessionDashboard({
@@ -79,16 +80,26 @@ export default function SessionDashboard({
   onInsertDraft,
   onClose,
   initialTab = "diff",
+  requestedTab,
 }: SessionDashboardProps) {
   const [activeTab, setActiveTab] = useState<"diff" | "tasks" | "activity" | "telemetry" | "github">(initialTab);
   const [gitState, setGitState] = useState<GitState | null>(null);
   const [gitError, setGitError] = useState("");
   const [busyGit, setBusyGit] = useState(false);
   const [fileDiff, setFileDiff] = useState("");
+  const [loadingDiff, setLoadingDiff] = useState(false);
+  const [diffTruncated, setDiffTruncated] = useState(false);
   const [diffSearch, setDiffSearch] = useState("");
   const [copiedDiff, setCopiedDiff] = useState(false);
   const [expandedToolId, setExpandedToolId] = useState<number | null>(null);
   const requestSeq = useRef(0);
+  const diffRequestSeq = useRef(0);
+
+  useEffect(() => {
+    if (requestedTab) {
+      setActiveTab(requestedTab.tab);
+    }
+  }, [requestedTab?.seq]);
 
   // Parse git files from git status string
   const parsedGit = useMemo(() => {
@@ -116,41 +127,64 @@ export default function SessionDashboard({
     }
   }, [workspace]);
 
-  // Reload git state when workspace changes or turns finish (running flips to false)
+  // Reload git state when workspace changes, turns finish, or window regains focus
   useEffect(() => {
     void loadGit();
+    const onFocus = () => void loadGit();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   }, [loadGit, running]);
 
   // Load diff for selected file
   const loadDiff = useCallback(
     async (path: string) => {
-      if (!workspace || !gitState?.current || !path) {
+      if (!workspace || !path) {
         setFileDiff("");
+        setLoadingDiff(false);
+        setDiffTruncated(false);
         return;
       }
+      const id = ++diffRequestSeq.current;
+      setLoadingDiff(true);
       try {
-        const res = await invoke<{ diff: string }>("git_file_diff", {
+        const base = gitState?.current || "HEAD";
+        const res = await invoke<{ diff: string; truncated?: boolean }>("git_file_diff", {
           workspace,
-          base: gitState.current,
+          base,
           path,
         });
+        if (diffRequestSeq.current !== id) return;
         setFileDiff(res.diff || "[No difference in this file]");
+        setDiffTruncated(Boolean(res.truncated));
       } catch (e) {
-        setFileDiff(`Could not load diff: ${String(e)}`);
+        if (diffRequestSeq.current === id) {
+          setFileDiff(`Could not load diff: ${String(e)}`);
+          setDiffTruncated(false);
+        }
+      } finally {
+        if (diffRequestSeq.current === id) setLoadingDiff(false);
       }
     },
     [workspace, gitState?.current],
   );
 
-  // If a diff file is selected from outside (or first file available)
+  // Sync selectedDiffFile with parsed files without hijacking active tab
   useEffect(() => {
-    if (selectedDiffFile) {
-      setActiveTab("diff");
-      void loadDiff(selectedDiffFile);
-    } else if (parsedGit.files.length > 0 && !selectedDiffFile) {
+    if (parsedGit.files.length === 0) {
+      if (selectedDiffFile) onSelectDiffFile(null);
+      setFileDiff("");
+      return;
+    }
+    if (selectedDiffFile && !parsedGit.files.some((f) => f.path === selectedDiffFile)) {
+      const fallback = parsedGit.files[0]!.path;
+      onSelectDiffFile(fallback);
+      void loadDiff(fallback);
+    } else if (!selectedDiffFile && parsedGit.files.length > 0) {
       const first = parsedGit.files[0]!.path;
       onSelectDiffFile(first);
       void loadDiff(first);
+    } else if (selectedDiffFile) {
+      void loadDiff(selectedDiffFile);
     }
   }, [selectedDiffFile, parsedGit.files, loadDiff, onSelectDiffFile]);
 
@@ -411,11 +445,22 @@ export default function SessionDashboard({
                         </div>
                       </div>
                       <div className="sd-diff-body">
-                        {fileDiff ? (
-                          <DiffLines text={fileDiff} query={diffSearch} />
-                        ) : (
+                        {loadingDiff ? (
                           <div style={{ color: "var(--muted)", padding: "12px" }}>
                             Loading diff…
+                          </div>
+                        ) : fileDiff ? (
+                          <>
+                            {diffTruncated && (
+                              <div style={{ fontSize: "10px", color: "var(--muted)", padding: "4px 8px", background: "var(--raised)", borderRadius: "4px", marginBottom: "8px" }}>
+                                Diff exceeds 24 KB and was truncated for preview.
+                              </div>
+                            )}
+                            <DiffLines text={fileDiff} query={diffSearch} />
+                          </>
+                        ) : (
+                          <div style={{ color: "var(--muted)", padding: "12px" }}>
+                            [No difference in this file]
                           </div>
                         )}
                       </div>
@@ -501,12 +546,13 @@ export default function SessionDashboard({
             ) : (
               toolActions.map((tool) => {
                 const open = expandedToolId === tool.id;
-                const body = [tool.output, tool.result].filter(Boolean).join("\n");
+                const body = [tool.reason ? `Reason: ${tool.reason}` : "", tool.output, tool.result].filter(Boolean).join("\n");
                 return (
                   <div key={tool.id} className="sd-activity-item">
                     <button
                       type="button"
                       className="sd-activity-head"
+                      aria-expanded={open}
                       onClick={() => setExpandedToolId(open ? null : tool.id)}
                     >
                       <div className="sd-activity-title">
@@ -528,7 +574,7 @@ export default function SessionDashboard({
                         {tool.status} {open ? "▾" : "▸"}
                       </span>
                     </button>
-                    {open && body && <pre className="sd-activity-out">{body}</pre>}
+                    {open && (body ? <pre className="sd-activity-out">{body}</pre> : <div className="sd-activity-out" style={{ color: "var(--muted)", fontStyle: "italic" }}>No text output recorded.</div>)}
                   </div>
                 );
               })
@@ -579,7 +625,7 @@ export default function SessionDashboard({
         {/* Tab 5: GitHub Hub */}
         {activeTab === "github" && (
           <div style={{ height: "100%", width: "100%", display: "flex", flexDirection: "column" }}>
-            <GitHubHub workspace={workspace || ""} onClose={onClose} />
+            <GitHubHub workspace={workspace || ""} embedded onInsertDraft={onInsertDraft} onClose={onClose} />
           </div>
         )}
       </div>

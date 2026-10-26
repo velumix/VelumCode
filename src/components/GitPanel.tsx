@@ -79,9 +79,11 @@ function FileButton({
 export default function GitPanel({
   workspace,
   onClose,
+  initialViewMode = "workstation",
 }: {
   workspace: string;
   onClose: () => void;
+  initialViewMode?: "workstation" | "github";
 }) {
   const [state, setState] = useState<GitState | null>(null);
   const [base, setBase] = useState("");
@@ -94,7 +96,7 @@ export default function GitPanel({
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [viewMode, setViewMode] = useState<"workstation" | "github">("workstation");
+  const [viewMode, setViewMode] = useState<"workstation" | "github">(initialViewMode);
   const panel = useRef<HTMLDivElement>(null);
   const request = useRef(0);
 
@@ -111,6 +113,11 @@ export default function GitPanel({
           ? previous
           : next.current,
       );
+      setSelected((prev) => {
+        if (!prev) return "";
+        const nextFiles = parseStatus(next.status ?? "").files;
+        return nextFiles.some((f) => f.path === prev) ? prev : "";
+      });
     } catch (e) {
       if (request.current === id) setError(String(e));
     } finally {
@@ -149,26 +156,39 @@ export default function GitPanel({
   );
 
   useEffect(() => {
-    setSelected("");
-    setDiff("");
-    setDiffUntracked(false);
-    setStat("");
-    setFind("");
     void loadState();
   }, [loadState]);
 
   useEffect(() => {
     if (!state || !base) return;
-    setSelected("");
-    setDiff("");
-    setDiffUntracked(false);
-    setFind("");
-    void loadDiff(base, "");
+    if (selected) {
+      void loadDiff(base, selected);
+    } else {
+      setDiff("");
+      setDiffUntracked(false);
+      setFind("");
+      void loadDiff(base, "");
+    }
   }, [base, state, loadDiff]);
 
   useEffect(() => {
+    const prevActive = document.activeElement as HTMLElement | null;
     panel.current?.querySelector<HTMLElement>("button, select")?.focus();
+    return () => {
+      prevActive?.focus();
+    };
   }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
   const { header, files } = parseStatus(state?.status ?? "");
   const groups = useMemo(() => groupStatus(files), [state?.status]);

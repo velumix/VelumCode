@@ -47,6 +47,7 @@ export interface GitHubRepoDetails {
 export interface GitHubPullRequest {
   number: number;
   title: string;
+  body?: string | null;
   user_login: string;
   user_avatar: string;
   state: string;
@@ -66,6 +67,7 @@ export interface GitHubLabel {
 export interface GitHubIssue {
   number: number;
   title: string;
+  body?: string | null;
   user_login: string;
   user_avatar: string;
   state: string;

@@ -265,7 +265,8 @@ pub fn apply(
                     .assignment
                     .as_ref()
                     .map(|a| a.automatic)
-                    .unwrap_or(profile.automatic);
+                    .unwrap_or(profile.automatic)
+                    && next.automatic;
                 card.assignment = Some(automation::Assignment {
                     bot_id: to,
                     cron: next.default_cron.clone(),
@@ -302,7 +303,7 @@ pub fn apply(
                         bot_id: to,
                         cron: next.default_cron,
                         timezone: next.timezone,
-                        automatic: profile.automatic,
+                        automatic: profile.automatic && next.automatic,
                     }),
                     last_summary: format!("{} → {}: {text}", profile.name, next.name),
                     last_run: Some(session_id.into()),
@@ -321,6 +322,10 @@ pub fn apply(
     )?;
     automation::sync(app, workspace, &updated)
         .map_err(|e| format!("The board was updated, but its schedule could not be saved: {e}"))?;
+    {
+        use tauri::Emitter;
+        let _ = app.emit("kanban-changed", workspace);
+    }
     if let Some((id, text)) = handoff {
         automation::handoff(app, workspace, &id, &text, chain + 1).map_err(|e| {
             format!("The board was updated, but the handoff schedule could not be saved: {e}")

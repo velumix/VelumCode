@@ -42,12 +42,17 @@ function RequestCard({ request, snapshot, canRespond, disabledReason, onRespond,
   const preview = useMemo(() => actionPreview(request.details), [request.details]);
   const answersReady = request.questions.every(question => {
     const answer = answers[question.id];
-    if (answer?.text?.trim()) return question.free_text && Array.from(answer.text).length <= 500;
+    if (answer?.text !== undefined && answer.text.length > 0) {
+      if (!question.secret && !answer.text.trim()) return false;
+      return question.free_text && Array.from(answer.text).length <= 500;
+    }
     const selected = answer?.selected || [];
     return selected.length >= question.min && selected.length <= question.max
       && (question.multiple || selected.length === 1);
   });
-  const primary = request.choices.find(choice => isApproval(choice) && choice.scope === 'once' && choice.rule == null);
+  const primary = ['once', 'turn']
+    .map(scope => request.choices.find(choice => isApproval(choice) && choice.scope === scope && choice.rule == null))
+    .find((choice): choice is ApprovalChoice => Boolean(choice));
   const direct = request.choices.filter(choice => choice !== primary && !isApproval(choice) && choice.rule == null);
   const more = request.choices.filter(choice => choice !== primary && !direct.includes(choice));
   const title = request.title.replace(/^(?:Command )?Permission required(?:: .+)?$/i, 'Permission required');
@@ -71,10 +76,24 @@ function RequestCard({ request, snapshot, canRespond, disabledReason, onRespond,
     setAnswers(previous => ({ ...previous, [id]: { ...previous[id], ...update, question_id: id } }));
   }
 
+  function submitAnswers() {
+    if (!answersReady) return;
+    void submit({ answers: request.questions.map(question => {
+      const answer = answers[question.id];
+      const hasText = question.secret ? Boolean(answer?.text?.length) : Boolean(answer?.text?.trim());
+      return hasText ? { question_id: question.id, text: question.secret ? answer!.text! : answer!.text!.trim() } : { question_id: question.id, selected: answer?.selected || [] };
+    }) });
+  }
+
   function writeAnswer(question: InteractionQuestion) {
     return <label className="interaction-feedback">{question.options.length ? 'Or write your answer' : 'Write your answer'}{question.secret
       ? <input type="password" autoComplete="off" maxLength={500} value={answers[question.id]?.text || ''} onChange={e => answerQuestion(question.id, { text: e.target.value, selected: [] })} />
-      : <textarea rows={2} maxLength={500} value={answers[question.id]?.text || ''} onChange={e => answerQuestion(question.id, { text: e.target.value, selected: [] })} />}</label>;
+      : <textarea rows={2} maxLength={500} value={answers[question.id]?.text || ''} onChange={e => answerQuestion(question.id, { text: e.target.value, selected: [] })} onKeyDown={e => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && enabled && answersReady) {
+          e.preventDefault();
+          submitAnswers();
+        }
+      }} />}</label>;
   }
 
   function disclosure(name: 'details' | 'guidance' | 'options', label: string) {
@@ -87,7 +106,13 @@ function RequestCard({ request, snapshot, canRespond, disabledReason, onRespond,
     <PermissionRecord status={request.status} tool={request.tool} details={request.details} source={request.source} message={request.message} />
   </section>;
 
-  return <section className="interaction-card interaction-pending" aria-label={request.title}>
+  return <section className="interaction-card interaction-pending" aria-label={request.title} onKeyDown={e => {
+    if (e.key === 'Escape' && expanded !== null) {
+      e.preventDefault();
+      e.stopPropagation();
+      setExpanded(null);
+    }
+  }}>
     <div className="interaction-heading">
       <Icon name={request.kind === 'question' ? 'chat' : 'shield'} size={16} />
       <strong>{title}</strong>
@@ -124,11 +149,7 @@ function RequestCard({ request, snapshot, canRespond, disabledReason, onRespond,
     </>}
     {request.kind === 'question' && <form onSubmit={e => {
       e.preventDefault();
-      if (!answersReady) return;
-      void submit({ answers: request.questions.map(question => {
-        const answer = answers[question.id];
-        return answer?.text?.trim() ? { question_id: question.id, text: question.secret ? answer.text : answer.text.trim() } : { question_id: question.id, selected: answer?.selected || [] };
-      }) });
+      submitAnswers();
     }}>
       {request.questions.map(question => <fieldset key={question.id} disabled={!enabled}>
         <legend className={question.question === title && request.questions.length === 1 ? 'interaction-sr-only' : undefined}>{question.question || question.header}</legend>

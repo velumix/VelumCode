@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import Icon from "./Icon";
 import {
@@ -21,9 +22,11 @@ import "./GitHubHub.css";
 interface GitHubHubProps {
   workspace: string;
   onClose?: () => void;
+  embedded?: boolean;
+  onInsertDraft?: (text: string) => void;
 }
 
-export default function GitHubHub({ workspace, onClose }: GitHubHubProps) {
+export default function GitHubHub({ workspace, onClose, embedded = false, onInsertDraft }: GitHubHubProps) {
   const [tab, setTab] = useState<"overview" | "pulls" | "issues" | "auth">("overview");
   const [authStatus, setAuthStatus] = useState<GitHubAuthStatus | null>(null);
   const [profile, setProfile] = useState<GitHubUserProfile | null>(null);
@@ -38,6 +41,9 @@ export default function GitHubHub({ workspace, onClose }: GitHubHubProps) {
   const [patSaving, setPatSaving] = useState(false);
   const [patSuccess, setPatSuccess] = useState("");
   const [copiedUrl, setCopiedUrl] = useState<string>("");
+  const [kanbanStatus, setKanbanStatus] = useState<{ id: number; message: string } | null>(null);
+  const pullSeqRef = useRef(0);
+  const issueSeqRef = useRef(0);
 
   // Create issue form state
   const [showNewIssue, setShowNewIssue] = useState(false);
@@ -81,28 +87,79 @@ export default function GitHubHub({ workspace, onClose }: GitHubHubProps) {
   }, [workspace]);
 
   const loadPulls = useCallback(async () => {
+    const seq = ++pullSeqRef.current;
     setLoading(true);
     try {
       const p = await fetchGitHubPulls(workspace, undefined, filterState);
-      setPulls(p);
+      if (pullSeqRef.current === seq) {
+        setPulls(p);
+      }
     } catch (e) {
-      console.warn("Failed to load pulls:", e);
+      if (pullSeqRef.current === seq) {
+        console.warn("Failed to load pulls:", e);
+      }
     } finally {
-      setLoading(false);
+      if (pullSeqRef.current === seq) {
+        setLoading(false);
+      }
     }
   }, [workspace, filterState]);
 
   const loadIssues = useCallback(async () => {
+    const seq = ++issueSeqRef.current;
     setLoading(true);
     try {
       const iss = await fetchGitHubIssues(workspace, undefined, filterState);
-      setIssues(iss);
+      if (issueSeqRef.current === seq) {
+        setIssues(iss);
+      }
     } catch (e) {
-      console.warn("Failed to load issues:", e);
+      if (issueSeqRef.current === seq) {
+        console.warn("Failed to load issues:", e);
+      }
     } finally {
-      setLoading(false);
+      if (issueSeqRef.current === seq) {
+        setLoading(false);
+      }
     }
   }, [workspace, filterState]);
+
+  const handleAddToKanban = async (item: {
+    number: number;
+    title: string;
+    html_url: string;
+    body?: string | null;
+  }) => {
+    if (!workspace) return;
+    try {
+      const board = await invoke<{ revision: number }>("kanban_request", {
+        workspace,
+        request: { action: "load" },
+      });
+      await invoke("kanban_request", {
+        workspace,
+        request: {
+          action: "save",
+          revision: board.revision,
+          card: {
+            id: crypto.randomUUID(),
+            title: `[GH #${item.number}] ${item.title}`,
+            description: `${item.html_url}${item.body ? `\n\n${item.body}` : ""}`.trim(),
+            column: "backlog",
+            priority: "normal",
+          },
+        },
+      });
+      setKanbanStatus({ id: item.number, message: "Added!" });
+      setTimeout(
+        () =>
+          setKanbanStatus((curr) => (curr?.id === item.number ? null : curr)),
+        2500,
+      );
+    } catch (err) {
+      setError(`Failed to add to Kanban: ${err}`);
+    }
+  };
 
   useEffect(() => {
     void loadData();
@@ -187,10 +244,14 @@ export default function GitHubHub({ workspace, onClose }: GitHubHubProps) {
   };
 
   const insertPromptToChat = (prompt: string) => {
+    if (onInsertDraft) {
+      onInsertDraft(prompt);
+      return;
+    }
     window.dispatchEvent(
       new CustomEvent("velum:insert-draft", { detail: prompt }),
     );
-    if (onClose) onClose();
+    if (!embedded && onClose) onClose();
   };
 
   return (
@@ -286,7 +347,7 @@ export default function GitHubHub({ workspace, onClose }: GitHubHubProps) {
         <div className="github-banner github-banner-error" role="alert">
           <Icon name="bug" size={16} />
           <span>{error}</span>
-          <button type="button" onClick={() => setError("")}>
+          <button type="button" aria-label="Dismiss error" onClick={() => setError("")}>
             <Icon name="close" size={14} />
           </button>
         </div>
@@ -296,7 +357,7 @@ export default function GitHubHub({ workspace, onClose }: GitHubHubProps) {
         <div className="github-banner github-banner-success">
           <Icon name="check" size={16} />
           <span>{patSuccess}</span>
-          <button type="button" onClick={() => setPatSuccess("")}>
+          <button type="button" aria-label="Dismiss message" onClick={() => setPatSuccess("")}>
             <Icon name="close" size={14} />
           </button>
         </div>
@@ -507,11 +568,14 @@ export default function GitHubHub({ workspace, onClose }: GitHubHubProps) {
                     <div className="github-item-main">
                       <div className="github-item-title-row">
                         <span className="github-item-num">#{pr.number}</span>
-                        <h4
-                          className="github-item-title"
-                          onClick={() => safeOpen(pr.html_url)}
-                        >
-                          {pr.title}
+                        <h4 className="github-item-title">
+                          <button
+                            type="button"
+                            className="github-title-link"
+                            onClick={() => safeOpen(pr.html_url)}
+                          >
+                            {pr.title}
+                          </button>
                         </h4>
                         {pr.draft && (
                           <span className="github-badge github-badge-draft">
@@ -539,9 +603,20 @@ export default function GitHubHub({ workspace, onClose }: GitHubHubProps) {
                       <button
                         type="button"
                         className="github-btn-action"
+                        onClick={() => void handleAddToKanban(pr)}
+                        title="Add PR to Kanban Backlog"
+                      >
+                        <Icon name="board" size={13} />{" "}
+                        {kanbanStatus?.id === pr.number
+                          ? kanbanStatus.message
+                          : "Kanban"}
+                      </button>
+                      <button
+                        type="button"
+                        className="github-btn-action"
                         onClick={() =>
                           insertPromptToChat(
-                            `Please review Pull Request #${pr.number} ("${pr.title}") on branch \`${pr.head_ref}\` against \`${pr.base_ref}\`:\n${pr.html_url}`,
+                            `Please review Pull Request #${pr.number} ("${pr.title}") on branch \`${pr.head_ref}\` against \`${pr.base_ref}\`:\n${pr.html_url}${pr.body ? `\n\nPR Description:\n${pr.body.slice(0, 1500)}` : ""}`,
                           )
                         }
                         title="Ask agent to review this PR"
@@ -653,11 +728,14 @@ export default function GitHubHub({ workspace, onClose }: GitHubHubProps) {
                     <div className="github-item-main">
                       <div className="github-item-title-row">
                         <span className="github-item-num">#{iss.number}</span>
-                        <h4
-                          className="github-item-title"
-                          onClick={() => safeOpen(iss.html_url)}
-                        >
-                          {iss.title}
+                        <h4 className="github-item-title">
+                          <button
+                            type="button"
+                            className="github-title-link"
+                            onClick={() => safeOpen(iss.html_url)}
+                          >
+                            {iss.title}
+                          </button>
                         </h4>
                         <span
                           className={`github-badge ${
@@ -696,9 +774,20 @@ export default function GitHubHub({ workspace, onClose }: GitHubHubProps) {
                       <button
                         type="button"
                         className="github-btn-action"
+                        onClick={() => void handleAddToKanban(iss)}
+                        title="Add Issue to Kanban Backlog"
+                      >
+                        <Icon name="board" size={13} />{" "}
+                        {kanbanStatus?.id === iss.number
+                          ? kanbanStatus.message
+                          : "Kanban"}
+                      </button>
+                      <button
+                        type="button"
+                        className="github-btn-action"
                         onClick={() =>
                           insertPromptToChat(
-                            `Please resolve GitHub Issue #${iss.number} ("${iss.title}"): ${iss.html_url}`,
+                            `Please resolve GitHub Issue #${iss.number} ("${iss.title}"): ${iss.html_url}${iss.body ? `\n\nIssue Description:\n${iss.body.slice(0, 1500)}` : ""}`,
                           )
                         }
                         title="Ask agent to work on this issue"

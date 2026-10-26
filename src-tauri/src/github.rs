@@ -100,6 +100,7 @@ pub struct GitHubRepoDetails {
 pub struct GitHubPullRequest {
     pub number: u64,
     pub title: String,
+    pub body: Option<String>,
     pub user_login: String,
     pub user_avatar: String,
     pub state: String,
@@ -121,6 +122,7 @@ pub struct GitHubLabel {
 pub struct GitHubIssue {
     pub number: u64,
     pub title: String,
+    pub body: Option<String>,
     pub user_login: String,
     pub user_avatar: String,
     pub state: String,
@@ -166,10 +168,21 @@ pub fn parse_github_repo_name(input: &str) -> Result<String, String> {
     if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
         return Err("Expected repository format: owner/repo".into());
     }
-    Ok(format!("{}/{}", parts[0], parts[1]))
+    let owner = parts[0].trim();
+    let repo = parts[1].trim();
+    if !owner
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        || !repo
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err("Invalid characters in repository name.".into());
+    }
+    Ok(format!("{owner}/{repo}"))
 }
 
-fn get_cli_token() -> Option<(String, Option<String>)> {
+fn get_cli_raw_token() -> Option<String> {
     let mut cmd = std::process::Command::new("gh");
     cmd.args(["auth", "token"]);
     cmd.stdin(std::process::Stdio::null())
@@ -186,9 +199,13 @@ fn get_cli_token() -> Option<(String, Option<String>)> {
     }
     let token = String::from_utf8(output.stdout).ok()?.trim().to_string();
     if token.is_empty() {
-        return None;
+        None
+    } else {
+        Some(token)
     }
+}
 
+fn get_cli_account() -> Option<String> {
     let mut user_cmd = std::process::Command::new("gh");
     user_cmd.args(["api", "user", "-q", ".login"]);
     user_cmd
@@ -200,24 +217,17 @@ fn get_cli_token() -> Option<(String, Option<String>)> {
         use std::os::windows::process::CommandExt;
         user_cmd.creation_flags(0x08000000);
     }
-    let account = user_cmd.output().ok().and_then(|o| {
-        if o.status.success() {
-            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if !s.is_empty() {
-                Some(s)
-            } else {
-                None
-            }
-        } else {
-            None
+    let output = user_cmd.output().ok()?;
+    if output.status.success() {
+        let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !s.is_empty() {
+            return Some(s);
         }
-    });
-
-    Some((token, account))
+    }
+    None
 }
 
-fn resolve_token(state: &GitHubState) -> (Option<String>, String) {
-    let creds = state.load_credentials();
+fn resolve_token(creds: &GitHubCredentials) -> (Option<String>, String) {
     if let Some(ref pat) = creds.token {
         let pat = pat.trim();
         if !pat.is_empty() {
@@ -225,7 +235,7 @@ fn resolve_token(state: &GitHubState) -> (Option<String>, String) {
         }
     }
 
-    if let Some((cli_token, _)) = get_cli_token() {
+    if let Some(cli_token) = get_cli_raw_token() {
         return (Some(cli_token), "cli".into());
     }
 
@@ -374,36 +384,40 @@ pub fn setup(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[tauri::command]
-pub fn github_auth_status(state: State<'_, GitHubState>) -> Result<GitHubAuthStatus, String> {
+pub async fn github_auth_status(state: State<'_, GitHubState>) -> Result<GitHubAuthStatus, String> {
     let creds = state.load_credentials();
-    let has_pat = creds.token.as_ref().map_or(false, |t| !t.trim().is_empty());
-    let cli = get_cli_token();
-    let has_cli = cli.is_some();
-    let cli_account = cli.and_then(|(_, acc)| acc);
+    tauri::async_runtime::spawn_blocking(move || {
+        let has_pat = creds.token.as_ref().is_some_and(|t| !t.trim().is_empty());
+        let cli_raw = get_cli_raw_token();
+        let has_cli = cli_raw.is_some();
+        let cli_account = if has_cli { get_cli_account() } else { None };
 
-    let active_source = if has_pat {
-        "pat"
-    } else if has_cli {
-        "cli"
-    } else if std::env::var("GITHUB_TOKEN")
-        .or_else(|_| std::env::var("GH_TOKEN"))
-        .is_ok()
-    {
-        "env"
-    } else {
-        "unauthenticated"
-    };
+        let active_source = if has_pat {
+            "pat"
+        } else if has_cli {
+            "cli"
+        } else if std::env::var("GITHUB_TOKEN")
+            .or_else(|_| std::env::var("GH_TOKEN"))
+            .is_ok()
+        {
+            "env"
+        } else {
+            "unauthenticated"
+        };
 
-    Ok(GitHubAuthStatus {
-        has_pat,
-        has_cli,
-        cli_account,
-        active_source: active_source.to_string(),
+        Ok(GitHubAuthStatus {
+            has_pat,
+            has_cli,
+            cli_account,
+            active_source: active_source.to_string(),
+        })
     })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn github_save_pat(
+pub async fn github_save_pat(
     state: State<'_, GitHubState>,
     token: String,
 ) -> Result<GitHubUserProfile, String> {
@@ -412,9 +426,13 @@ pub fn github_save_pat(
         return Err("Token cannot be empty.".into());
     }
 
-    // Verify token by querying GitHub user profile
-    let client = build_client(Some(&token))?;
-    let profile = fetch_user(&client, "pat")?;
+    let tok = token.clone();
+    let profile = tauri::async_runtime::spawn_blocking(move || {
+        let client = build_client(Some(&tok))?;
+        fetch_user(&client, "pat")
+    })
+    .await
+    .map_err(|e| e.to_string())??;
 
     // Save token if verified
     let mut creds = state.load_credentials();
@@ -435,11 +453,12 @@ pub fn github_clear_pat(state: State<'_, GitHubState>) -> Result<(), String> {
 pub async fn github_user_profile(
     state: State<'_, GitHubState>,
 ) -> Result<GitHubUserProfile, String> {
-    let (token, source) = resolve_token(&state);
-    if token.is_none() {
-        return Err("No GitHub credentials detected. Sign in with 'gh auth login' or enter a Personal Access Token in settings.".into());
-    }
+    let creds = state.load_credentials();
     tauri::async_runtime::spawn_blocking(move || {
+        let (token, source) = resolve_token(&creds);
+        if token.is_none() {
+            return Err("No GitHub credentials detected. Sign in with 'gh auth login' or enter a Personal Access Token in settings.".into());
+        }
         let client = build_client(token.as_deref())?;
         fetch_user(&client, &source)
     })
@@ -454,9 +473,10 @@ pub async fn github_repo_details(
     repo: Option<String>,
 ) -> Result<GitHubRepoDetails, String> {
     let repo_name = resolve_repo_name(&workspace, repo.as_deref())?;
-    let (token, _) = resolve_token(&state);
+    let creds = state.load_credentials();
 
     tauri::async_runtime::spawn_blocking(move || {
+        let (token, _) = resolve_token(&creds);
         let client = build_client(token.as_deref())?;
         let url = format!("https://api.github.com/repos/{repo_name}");
         let resp = client
@@ -517,10 +537,15 @@ pub async fn github_repo_pulls(
     state_filter: Option<String>,
 ) -> Result<Vec<GitHubPullRequest>, String> {
     let repo_name = resolve_repo_name(&workspace, repo.as_deref())?;
-    let (token, _) = resolve_token(&state);
-    let filter = state_filter.unwrap_or_else(|| "open".to_string());
+    let creds = state.load_credentials();
+    let filter = match state_filter.as_deref() {
+        Some("closed") => "closed",
+        Some("all") => "all",
+        _ => "open",
+    };
 
     tauri::async_runtime::spawn_blocking(move || {
+        let (token, _) = resolve_token(&creds);
         let client = build_client(token.as_deref())?;
         let url =
             format!("https://api.github.com/repos/{repo_name}/pulls?state={filter}&per_page=20");
@@ -543,6 +568,7 @@ pub async fn github_repo_pulls(
             .map(|item| GitHubPullRequest {
                 number: item["number"].as_u64().unwrap_or(0),
                 title: item["title"].as_str().unwrap_or("").to_string(),
+                body: item["body"].as_str().map(|s| s.to_string()),
                 user_login: item["user"]["login"].as_str().unwrap_or("").to_string(),
                 user_avatar: item["user"]["avatar_url"]
                     .as_str()
@@ -572,10 +598,15 @@ pub async fn github_repo_issues(
     state_filter: Option<String>,
 ) -> Result<Vec<GitHubIssue>, String> {
     let repo_name = resolve_repo_name(&workspace, repo.as_deref())?;
-    let (token, _) = resolve_token(&state);
-    let filter = state_filter.unwrap_or_else(|| "open".to_string());
+    let creds = state.load_credentials();
+    let filter = match state_filter.as_deref() {
+        Some("closed") => "closed",
+        Some("all") => "all",
+        _ => "open",
+    };
 
     tauri::async_runtime::spawn_blocking(move || {
+        let (token, _) = resolve_token(&creds);
         let client = build_client(token.as_deref())?;
         let url =
             format!("https://api.github.com/repos/{repo_name}/issues?state={filter}&per_page=20");
@@ -614,6 +645,7 @@ pub async fn github_repo_issues(
                 GitHubIssue {
                     number: item["number"].as_u64().unwrap_or(0),
                     title: item["title"].as_str().unwrap_or("").to_string(),
+                    body: item["body"].as_str().map(|s| s.to_string()),
                     user_login: item["user"]["login"].as_str().unwrap_or("").to_string(),
                     user_avatar: item["user"]["avatar_url"]
                         .as_str()
@@ -644,16 +676,17 @@ pub async fn github_create_issue(
     body: String,
 ) -> Result<GitHubIssue, String> {
     let repo_name = resolve_repo_name(&workspace, repo.as_deref())?;
-    let (token, _) = resolve_token(&state);
-    if token.is_none() {
-        return Err("Authentication required to create GitHub issues.".into());
-    }
+    let creds = state.load_credentials();
     let title = title.trim().to_string();
     if title.is_empty() {
         return Err("Issue title cannot be empty.".into());
     }
 
     tauri::async_runtime::spawn_blocking(move || {
+        let (token, _) = resolve_token(&creds);
+        if token.is_none() {
+            return Err("Authentication required to create GitHub issues.".into());
+        }
         let client = build_client(token.as_deref())?;
         let url = format!("https://api.github.com/repos/{repo_name}/issues");
         let payload = json!({
@@ -689,6 +722,7 @@ pub async fn github_create_issue(
         Ok(GitHubIssue {
             number: item["number"].as_u64().unwrap_or(0),
             title: item["title"].as_str().unwrap_or("").to_string(),
+            body: item["body"].as_str().map(|s| s.to_string()),
             user_login: item["user"]["login"].as_str().unwrap_or("").to_string(),
             user_avatar: item["user"]["avatar_url"]
                 .as_str()

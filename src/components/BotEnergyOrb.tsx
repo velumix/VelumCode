@@ -91,19 +91,44 @@ export default function BotEnergyOrb({
     const reduced = window.matchMedia?.(
       "(prefers-reduced-motion: reduce)",
     ).matches;
-    let frame = 0;
 
-    const draw = (time: number) => {
+    // Cache computed palette to avoid per-frame hex parsing and mixing
+    let cachedColor = "";
+    let cachedMode = "";
+    let cachedBase: [number, number, number] = [121, 169, 255];
+    let cachedTint: [number, number, number] = [121, 169, 255];
+    let cachedLight: [number, number, number] = [255, 255, 255];
+    let cachedDark: [number, number, number] = [8, 12, 24];
+
+    const getPalette = (currentColor: string, currentMode: OrbStatus) => {
+      if (currentColor !== cachedColor || currentMode !== cachedMode) {
+        cachedColor = currentColor;
+        cachedMode = currentMode;
+        cachedBase = hexToRgb(currentColor);
+        cachedTint =
+          currentMode === "error"
+            ? mix(cachedBase, [255, 107, 94], 0.55)
+            : currentMode === "disabled"
+              ? [128, 134, 148]
+              : cachedBase;
+        cachedLight = mix(
+          cachedTint,
+          [255, 255, 255],
+          currentMode === "disabled" ? 0.25 : 0.55,
+        );
+        cachedDark = mix(cachedTint, [8, 12, 24], 0.72);
+      }
+      return {
+        base: cachedBase,
+        tint: cachedTint,
+        light: cachedLight,
+        dark: cachedDark,
+      };
+    };
+
+    const draw = (phaseAcc: number, pulseAcc: number) => {
       const { color: current, status: mode } = stateRef.current;
-      const base = hexToRgb(current);
-      const tint =
-        mode === "error"
-          ? mix(base, [255, 107, 94] as [number, number, number], 0.55)
-          : mode === "disabled"
-            ? ([128, 134, 148] as [number, number, number])
-            : base;
-      const light = mix(tint, [255, 255, 255], mode === "disabled" ? 0.25 : 0.55);
-      const dark = mix(tint, [8, 12, 24], 0.72);
+      const { tint, light, dark } = getPalette(current, mode);
 
       const w = canvas.width;
       const h = canvas.height;
@@ -111,6 +136,11 @@ export default function BotEnergyOrb({
       const cy = h / 2;
       const r = Math.min(w, h) / 2;
       ctx.clearRect(0, 0, w, h);
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.clip();
 
       // Deep core.
       const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
@@ -123,12 +153,13 @@ export default function BotEnergyOrb({
       ctx.fill();
 
       // Orbiting plasma blobs.
-      const energy = mode === "working" ? 2.6 : 1;
-      const t = time * energy;
       for (const b of blobs) {
-        const angle = b.phase + t * b.speed * energy * 0.6;
+        const angle = b.phase + phaseAcc * b.speed * 0.6;
         const wob =
-          1 + 0.18 * Math.sin(t * b.wobble + b.phase) * (mode === "working" ? 1.6 : 1);
+          1 +
+          0.18 *
+            Math.sin(phaseAcc * b.wobble + b.phase) *
+            (mode === "working" ? 1.6 : 1);
         const px = cx + Math.cos(angle) * r * b.orbit * 2.4 * wob;
         const py = cy + Math.sin(angle) * r * b.orbit * 2.4 * wob;
         const br = r * b.radius * 2.2 * (mode === "working" ? wob : 1);
@@ -143,42 +174,77 @@ export default function BotEnergyOrb({
       }
 
       // Rim light, breathing slowly (faster while working).
-      const pulse =
-        0.55 + 0.3 * Math.sin(t * (mode === "working" ? 3.4 : 1.1));
+      const pulse = 0.55 + 0.3 * Math.sin(pulseAcc);
       ctx.strokeStyle = css(light, mode === "disabled" ? 0.35 : pulse);
       ctx.lineWidth = Math.max(1, w * 0.03);
       ctx.beginPath();
       ctx.arc(cx, cy, r * 0.93, 0, Math.PI * 2);
       ctx.stroke();
+
+      ctx.restore();
     };
 
-    if (reduced || status === "disabled") {
-      draw(1.2);
+    if (reduced) {
+      draw(1.2, 1.2);
       return;
     }
-    draw(1.2);
-    // One orb per bot across panels, tabs, chat and kanban adds up: only
-    // animate while the canvas is on screen and the page is visible.
+
+    let frame = 0;
     let running = false;
+    let phaseAcc = 0;
+    let pulseAcc = 0;
+    let lastTime = performance.now();
+    let lastDrawTime = 0;
+
     const tick = (now: number) => {
       if (!running) return;
-      draw(now / 1000 + 1.2);
+      const dt = Math.min((now - lastTime) / 1000, 0.1);
+      lastTime = now;
+
+      const { status: mode } = stateRef.current;
+      if (mode === "disabled") {
+        draw(phaseAcc, pulseAcc);
+        stop();
+        return;
+      }
+
+      const isWorking = mode === "working";
+      const speed = isWorking ? 2.4 : 0.9;
+      phaseAcc += dt * speed;
+      pulseAcc += dt * (isWorking ? 3.4 : 1.1);
+
+      const frameInterval = isWorking ? 16 : 50; // ~20fps for idle saves battery
+      if (now - lastDrawTime >= frameInterval) {
+        lastDrawTime = now;
+        draw(phaseAcc, pulseAcc);
+      }
+
       frame = requestAnimationFrame(tick);
     };
+
     const start = () => {
       if (running) return;
       running = true;
+      lastTime = performance.now();
       frame = requestAnimationFrame(tick);
     };
+
     const stop = () => {
       running = false;
       cancelAnimationFrame(frame);
     };
+
     let onScreen = true;
     const maybeStart = () => {
-      if (onScreen && document.visibilityState === "visible") start();
-      else stop();
+      const mode = stateRef.current.status;
+      if (onScreen && document.visibilityState === "visible" && mode !== "disabled") {
+        start();
+      } else {
+        stop();
+        draw(phaseAcc, pulseAcc);
+      }
     };
+
     const observer =
       typeof IntersectionObserver === "undefined"
         ? null
@@ -189,12 +255,13 @@ export default function BotEnergyOrb({
     if (observer) observer.observe(canvas);
     document.addEventListener("visibilitychange", maybeStart);
     maybeStart();
+
     return () => {
       observer?.disconnect();
       document.removeEventListener("visibilitychange", maybeStart);
       stop();
     };
-  }, [color, size, status, seed]);
+  }, [size]);
 
   return (
     <canvas

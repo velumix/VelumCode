@@ -45,6 +45,8 @@ So I made it. **Velum Code is the app I built around that idea.** It started as 
 | **Make it your own.** | A permission-based plugin system, command palette integration, and a small TypeScript SDK. Plugins run on demand in isolated workers. |
 | **A team with personality.** | Named bots with profile pictures, editable soul.md and agent.md, preferred models and reasoning, and private memory that follows them across providers. |
 | **Work that keeps moving.** | Kanban assignments create cron jobs. Bots update cards and hand off to teammates, with pause/stop controls and a clear activity history. |
+| **GitHub Hub & Workstation.** | Inspect pull requests, review issues, inspect per-file diffs with real line numbers, and bridge issues directly to Kanban. |
+| **Split Studio & Dashboards.** | Side-by-side agent conversation with live diff viewers, tool execution logs with reasoning details, and live telemetry. |
 | **A quieter workspace.** | Charcoal surfaces, blue accents, readable conversations, and motion that respects reduced-motion preferences. |
 | **See what the agent is doing.** | Streaming responses, Markdown and code blocks, tool activity, task lists, and visible errors. |
 | **Keep the next thought ready.** | Messages submitted during active work queue in order. Edit, remove, pause, or resume the same queue on desktop and phone. Stop and failures preserve pending messages for review. |

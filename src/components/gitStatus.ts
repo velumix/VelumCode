@@ -17,7 +17,11 @@ export function parseStatus(text: string): { header: string; files: ChangedFile[
     // XY + space + path needs at least 4 characters; shorter lines carry no file.
     if (line.length < 4) continue;
     const rest = line.slice(3);
-    const path = rest.includes(" -> ") ? rest.split(" -> ").pop()! : rest;
+    const rawPath = rest.includes(" -> ") ? rest.split(" -> ").pop()! : rest;
+    const path =
+      rawPath.startsWith('"') && rawPath.endsWith('"')
+        ? rawPath.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\")
+        : rawPath;
     files.push({ x: line[0]!, y: line[1]!, path });
   }
   return { header, files };

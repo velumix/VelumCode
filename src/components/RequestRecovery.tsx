@@ -17,15 +17,23 @@ export default function RequestRecovery({ request, disabled, queued, paused, max
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
   const inFlight = useRef(false);
+  const queuedSubmit = useRef(false);
   const field = useRef<HTMLTextAreaElement>(null);
   const editButton = useRef<HTMLButtonElement>(null);
   const fieldId = useId();
   const hintId = useId();
   const lengthHintId = useId();
   const prompt = (editing ? text : request.prompt).trim();
-  const overLimit = Array.from(prompt).length > maxLength;
+  const charCount = Array.from(prompt).length;
+  const overLimit = charCount > maxLength;
 
   useEffect(() => { if (editing) field.current?.focus(); }, [editing]);
+  useEffect(() => {
+    if (submitted && queuedSubmit.current && !queued) {
+      queuedSubmit.current = false;
+      setSubmitted(false);
+    }
+  }, [submitted, queued]);
 
   async function retry() {
     if (disabled || inFlight.current || submitted || !prompt || overLimit) return;
@@ -33,8 +41,13 @@ export default function RequestRecovery({ request, disabled, queued, paused, max
     setBusy(true);
     setError('');
     try {
-      if (await submit(prompt)) setSubmitted(true);
-      else setError('The request was not sent. Your edits are still here.');
+      const wasQueued = queued;
+      if (await submit(prompt)) {
+        queuedSubmit.current = wasQueued;
+        setSubmitted(true);
+      } else {
+        setError('The request was not sent. Your edits are still here.');
+      }
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -60,9 +73,10 @@ export default function RequestRecovery({ request, disabled, queued, paused, max
 
   return <section className="request-recovery" aria-label="Recover request">
     <p id={hintId} className="request-recovery-hint">{hint}{queued ? ` The retry joins the end of the queue.${paused ? ' Resume the queue when ready.' : ''}` : ''}</p>
-    {overLimit && <p id={lengthHintId} className="request-recovery-hint" role="status">This request is too long to retry here. Revise it to {maxLength.toLocaleString()} characters or fewer.</p>}
+    {overLimit && <p id={lengthHintId} className="request-recovery-hint" role="status">This request is too long to retry here ({charCount.toLocaleString()} / {maxLength.toLocaleString()} characters). Revise it to {maxLength.toLocaleString()} characters or fewer.</p>}
     <form onSubmit={event => { event.preventDefault(); void retry(); }} onKeyDown={event => {
       if (event.key === 'Escape' && editing && !busy) { event.preventDefault(); event.stopPropagation(); cancelEdit(); }
+      else if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && editing && !busy) { event.preventDefault(); void retry(); }
     }}>
       {editing && <div className="request-recovery-editor">
         <label htmlFor={fieldId}>Request to retry</label>

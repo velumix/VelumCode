@@ -1561,8 +1561,8 @@ pub fn agent_new(
     let provider = provider.unwrap_or_default();
     let bot = bot_id
         .as_ref()
-        .map(|id| app.state::<crate::bots::Store>().get(id))
-        .transpose()?;
+        .and_then(|id| app.state::<crate::bots::Store>().get(id).ok());
+    let bot_id = bot.as_ref().map(|b| b.id.clone());
     let options = options.unwrap_or_default();
     options.validate(provider)?;
     let tab_id = tab_id.unwrap_or_else(|| id.clone());
@@ -1965,8 +1965,7 @@ fn send_inner(
     let bot = session
         .bot_id
         .as_ref()
-        .map(|bot| app.state::<crate::bots::Store>().get(bot))
-        .transpose()?;
+        .and_then(|id| app.state::<crate::bots::Store>().get(id).ok());
     if bot.as_ref().is_some_and(|bot| !bot.enabled) {
         return Err("This bot is disabled. Enable it from Bots before starting work.".into());
     }

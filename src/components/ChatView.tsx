@@ -334,17 +334,20 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
   });
   const [selectedDiffFile, setSelectedDiffFile] = useState<string | null>(null);
   const [gitChangedCount, setGitChangedCount] = useState(0);
+  const [dashboardTabReq, setDashboardTabReq] = useState<{ tab: "diff" | "tasks" | "activity" | "telemetry" | "github"; seq: number } | null>(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
 
   useEffect(() => {
-    if (!effective) {
-      setGitChangedCount(0);
+    if (!effective || !active) {
+      if (!effective) setGitChangedCount(0);
       return;
     }
     let mounted = true;
     void invoke<{ status: string }>("git_state", { workspace: effective })
       .then((state) => {
-        if (mounted && state?.status) {
-          const parsed = parseStatus(state.status);
+        if (mounted && state) {
+          const parsed = parseStatus(state.status || "");
           setGitChangedCount(parsed.files.length);
         }
       })
@@ -354,7 +357,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
     return () => {
       mounted = false;
     };
-  }, [effective, running, blocks.length]);
+  }, [effective, active, running, blocks.length]);
 
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashIdx, setSlashIdx] = useState(0);
@@ -380,6 +383,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
 
   useEffect(() => {
     const onInsertDraft = (e: Event) => {
+      if (!activeRef.current) return;
       const text = (e as CustomEvent<string>).detail;
       if (!text) return;
       const next = inputRef.current ? `${inputRef.current}\n\n${text}` : text;
@@ -1005,6 +1009,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
               title="Inspect changed files and live diffs"
               onClick={() => {
                 setChatMode("split");
+                setDashboardTabReq(r => ({ tab: "diff", seq: (r?.seq ?? 0) + 1 }));
                 try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
               }}
             >
@@ -1095,6 +1100,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                     busy={!!current}
                     onOpenDashboard={() => {
                       setChatMode("split");
+                      setDashboardTabReq(r => ({ tab: "activity", seq: (r?.seq ?? 0) + 1 }));
                       try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
                     }}
                   >
@@ -1121,7 +1127,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                   return (
                     <div key={b.id} className="msg assistant">
                       <div className="message-header">
-                        <span className="message-avatar muse-avatar">{bot?<BotAvatar bot={bot} size={38} status={running ? "working" : "idle"}/>:<VelumMark size={38}/>}</span>
+                        <span className="message-avatar muse-avatar">{bot?<BotAvatar bot={bot} size={38} status={b.open && running ? "working" : "idle"}/>:<VelumMark size={38}/>}</span>
                         <div className="message-author"><strong>{bot?.name||providerNames[provider]}<span className="assistant-badge">{bot?providerNames[provider]:'AI'}</span></strong></div>
                         <CopyButton text={b.text} />
                         <button type="button" className="memory-usage" aria-label="Remember this answer" onClick={()=>onRemember(b.text)}><Icon name="memory" size={15}/></button>
@@ -1146,6 +1152,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                                   onClick={() => {
                                     setSelectedDiffFile(file);
                                     setChatMode("split");
+                                    setDashboardTabReq(r => ({ tab: "diff", seq: (r?.seq ?? 0) + 1 }));
                                     try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
                                   }}
                                 >
@@ -1160,6 +1167,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                               className="turn-diff-pill"
                               onClick={() => {
                                 setChatMode("split");
+                                setDashboardTabReq(r => ({ tab: "diff", seq: (r?.seq ?? 0) + 1 }));
                                 try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
                               }}
                             >
@@ -1366,15 +1374,16 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
           disabled={!effective || running}
           onClick={async () => {
             try {
-              const state = await invoke<{ current: string; status: string }>("git_state", { workspace: effective });
-              if (!state?.current) {
+              const state = await invoke<{ root?: string; current: string; status: string }>("git_state", { workspace: effective });
+              if (!state?.root && !state?.current && !state?.status) {
                 setWorkspaceError("No Git repository in this project.");
                 return;
               }
-              const fileDiff = await invoke<{ diff: string }>("git_file_diff", { workspace: effective, base: state.current, path: "" }).catch(() => ({ diff: "" }));
+              const branch = state.current || "HEAD";
+              const fileDiff = await invoke<{ diff: string }>("git_file_diff", { workspace: effective, base: branch, path: "" }).catch(() => ({ diff: "" }));
               const addition = fileDiff.diff
-                ? `Here is the current git diff on branch \`${state.current}\`:\n\n\`\`\`diff\n${fileDiff.diff.slice(0, 8000)}\n\`\`\`\nPlease review these changes:`
-                : `[Git: repository is clean on branch ${state.current}]`;
+                ? `Here is the current git diff on branch \`${branch}\`:\n\n\`\`\`diff\n${fileDiff.diff.slice(0, 8000)}\n\`\`\`\nPlease review these changes:`
+                : `[Git: repository is clean on branch ${branch}]`;
               const next = inputRef.current ? `${inputRef.current}\n\n${addition}` : addition;
               if (next.length <= 64000) {
                 inputRef.current = next;
@@ -1425,7 +1434,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
       </div>
       </div>
 
-      {chatMode !== "stream" && (
+      {active && chatMode !== "stream" && (
         <div className="chat-dashboard-column">
           <SessionDashboard
             workspace={effective}
@@ -1440,6 +1449,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
             memoryUsage={memoryUsage}
             selectedDiffFile={selectedDiffFile}
             onSelectDiffFile={setSelectedDiffFile}
+            requestedTab={dashboardTabReq}
             onClose={() => {
               setChatMode("stream");
               try { localStorage.setItem("velum:chat-mode", "stream"); } catch {}

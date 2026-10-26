@@ -302,9 +302,10 @@ fn check_revision(base: &str) -> Result<&str, String> {
         return Ok("HEAD");
     }
     let safe = !base.starts_with('-')
-        && base
-            .chars()
-            .all(|c| c.is_alphanumeric() || matches!(c, '/' | '.' | '_' | '-'));
+        && base.chars().all(|c| {
+            c.is_alphanumeric()
+                || matches!(c, '/' | '.' | '_' | '-' | '@' | '{' | '}' | '~' | '^' | '+')
+        });
     if !safe {
         return Err("Unknown or unsafe Git revision.".into());
     }
@@ -351,7 +352,8 @@ fn check_diff_path(relative: &str) -> Result<PathBuf, String> {
 fn untracked_diff(repository: &Path, relative: &str, cap: usize) -> Option<(String, bool)> {
     let disk = repository.join(Path::new(relative));
     let actual = fs::canonicalize(&disk).ok()?;
-    if !actual.starts_with(repository) || !actual.is_file() {
+    let canonical_repo = fs::canonicalize(repository).unwrap_or_else(|_| repository.to_path_buf());
+    if !actual.starts_with(&canonical_repo) || !actual.is_file() {
         return None;
     }
     // Only synthesize for files Git really doesn't track. A tracked file with
@@ -423,7 +425,7 @@ pub fn git_diff(root: &Path, base: &str, relative: Option<&str>) -> Result<Value
     // returns the unified diff of that file. `path` is repository-relative.
     // `--find-renames` keeps moved files on one diff line instead of an
     // add/delete pair with no link between them.
-    let (text, truncated) = if relative.is_some_and(|r| !r.is_empty()) {
+    let diff_result = if relative.is_some_and(|r| !r.is_empty()) {
         run_git(
             "diff",
             &repository,
@@ -437,7 +439,28 @@ pub fn git_diff(root: &Path, base: &str, relative: Option<&str>) -> Result<Value
             ],
             &paths,
             24000,
-        )?
+        )
+        .or_else(|err| {
+            if base == "HEAD"
+                && (err.contains("unknown revision") || err.contains("ambiguous argument 'HEAD'"))
+            {
+                run_git(
+                    "diff",
+                    &repository,
+                    &[
+                        "diff",
+                        "--no-color",
+                        "--no-ext-diff",
+                        "--find-renames",
+                        "-U3",
+                    ],
+                    &paths,
+                    24000,
+                )
+            } else {
+                Err(err)
+            }
+        })
     } else {
         run_git(
             "diff",
@@ -451,8 +474,24 @@ pub fn git_diff(root: &Path, base: &str, relative: Option<&str>) -> Result<Value
             ],
             &paths,
             24000,
-        )?
+        )
+        .or_else(|err| {
+            if base == "HEAD"
+                && (err.contains("unknown revision") || err.contains("ambiguous argument 'HEAD'"))
+            {
+                run_git(
+                    "diff",
+                    &repository,
+                    &["diff", "--no-color", "--find-renames", "--stat=200,200"],
+                    &paths,
+                    24000,
+                )
+            } else {
+                Err(err)
+            }
+        })
     };
+    let (text, truncated) = diff_result?;
     if relative.is_some_and(|r| !r.is_empty()) && text.trim().is_empty() {
         let name = relative.unwrap_or("");
         // `git diff` prints nothing for untracked files; render the new file

@@ -62,14 +62,19 @@ export default function GitChip({
     }>("git_state", { workspace })
       .then((next) => {
         if (cancelled || request.current !== id) return;
-        if (!next?.current) {
+        if (!next || (!next.current && !next.status)) {
           setChip(null);
           return;
         }
         failures.current = 0;
+        const branch =
+          next.current ||
+          (next.status?.includes("No commits yet")
+            ? "unborn"
+            : "detached HEAD");
         const { header, files } = parseStatus(next.status ?? "");
         setChip({
-          branch: next.current,
+          branch,
           changed: files.length,
           header,
           ahead: next.ahead ?? 0,

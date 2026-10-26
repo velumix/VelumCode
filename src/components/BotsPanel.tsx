@@ -26,6 +26,7 @@ import "./BotsPanel.css";
 const MemoryPanel = lazy(() => import("./MemoryPanel"));
 const cleanView: BotView = { profiles: [], root: "", warnings: [] };
 type Props = {
+  initialRunSessionId?: string;
   renderInteractions?: (sessionId: string) => ReactNode;
   workspace: string;
   provider: Provider;
@@ -47,14 +48,14 @@ export default function BotsPanel(props: Props) {
   const { request, automation, readOnly = false } = props;
   const [view, setView] = useState(cleanView);
   const [page, setPage] = useState<"profiles" | "schedules" | "activity">(
-    props.initialPage || "profiles",
+    props.initialRunSessionId ? "activity" : (props.initialPage || "profiles"),
   );
   const [editor, setEditor] = useState<BotProfile | null>(null);
   const [section, setSection] = useState<
     "identity" | "instructions" | "automation"
   >("identity");
   const [jobs, setJobs] = useState<AutomationView | null>(null);
-  const [selectedRun, setSelectedRun] = useState("");
+  const [selectedRun, setSelectedRun] = useState(props.initialRunSessionId || "");
   const [memory, setMemory] = useState<BotProfile | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -105,6 +106,14 @@ export default function BotsPanel(props: Props) {
       clearInterval(timer);
     };
   }, [page]);
+
+  useEffect(() => {
+    if (props.initialRunSessionId) {
+      setPage("activity");
+      setSelectedRun(props.initialRunSessionId);
+    }
+  }, [props.initialRunSessionId]);
+
   const edit = (bot: BotProfile) => {
     original.current = JSON.stringify(bot);
     setEditor({ ...bot, options: { ...bot.options } });
@@ -119,6 +128,7 @@ export default function BotsPanel(props: Props) {
       return;
     }
     if (editor) setEditor(null);
+    else if (selectedRun) setSelectedRun("");
     else props.onClose();
   };
   const patch = (value: Partial<BotProfile>) =>

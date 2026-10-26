@@ -832,16 +832,36 @@ pub fn finish(
                 } else if card.column == "backlog" || card.column == "progress" {
                     // An action sets last_summary; no action means ask the user to review.
                     if card.last_run.as_deref() != Some(session_id) {
-                        let updated = app.state::<kanban::Store>().request(
-                            &job.workspace,
-                            kanban::Request::Move {
-                                revision: board.revision,
-                                id: card.id.clone(),
-                                column: "review".into(),
-                                before: None,
-                            },
-                        )?;
-                        store.sync(&job.workspace, &updated)?;
+                        let card_id = card.id.clone();
+                        let mut current_board = board;
+                        for attempt in 0..3 {
+                            let res = app.state::<kanban::Store>().request(
+                                &job.workspace,
+                                kanban::Request::Move {
+                                    revision: current_board.revision,
+                                    id: card_id.clone(),
+                                    column: "review".into(),
+                                    before: None,
+                                },
+                            );
+                            match res {
+                                Ok(updated) => {
+                                    store.sync(&job.workspace, &updated)?;
+                                    use tauri::Emitter;
+                                    let _ = app.emit("kanban-changed", &job.workspace);
+                                    break;
+                                }
+                                Err(_) if attempt < 2 => {
+                                    if let Ok(fresh) = app
+                                        .state::<kanban::Store>()
+                                        .request(&job.workspace, kanban::Request::Load {})
+                                    {
+                                        current_board = fresh;
+                                    }
+                                }
+                                Err(e) => return Err(e),
+                            }
+                        }
                     }
                 }
             }

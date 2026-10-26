@@ -373,7 +373,12 @@ pub async fn kanban_request(
                 app.state::<crate::bots::Store>().get(&a.bot_id)?;
             }
         }
+        let is_mutation = !matches!(request, Request::Load {});
         let board = app.state::<Store>().request(&workspace, request)?;
+        if is_mutation {
+            use tauri::Emitter;
+            let _ = app.emit("kanban-changed", &workspace);
+        }
         crate::automation::sync(&app, &workspace, &board)
             .map_err(|e| format!("Board saved, but its schedule could not be updated: {e}"))?;
         Ok(board)

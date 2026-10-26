@@ -108,6 +108,8 @@ export default function App() {
   const [settingsPage, setSettingsPage] = useState<"appearance" | "updates">("appearance");
   const [bots,setBots]=useState<BotProfile[]>([]);
   const [botPanel,setBotPanel]=useState<'manage'|'handoff'|'activity'|null>(null);
+  const [botRunTarget, setBotRunTarget] = useState<string | undefined>(undefined);
+  const [gitInitialMode, setGitInitialMode] = useState<"workstation" | "github">("workstation");
   const refreshBots=useCallback(async()=>{const view=await invoke<BotView>('bots_request',{request:{action:'list'}});setBots(view?.profiles||[]);},[]);
   useEffect(()=>{void refreshBots().catch(()=>{});const registration=listen('bots-changed',()=>void refreshBots().catch(()=>{}));return()=>{void registration.then(off=>off());};},[refreshBots]);
   const [plugins, setPlugins] = useState<InstalledPlugin[]>([]);
@@ -154,7 +156,7 @@ export default function App() {
     const navigate = async () => {
       const id = await invoke<string | null>("desktop_take_navigation");
       if (disposed || !id) return;
-      if(id.startsWith('bot-run-')){setBotPanel('activity');return;}
+      if(id.startsWith('bot-run-')){setBotRunTarget(id.replace(/^bot-run-/, ''));setBotPanel('activity');return;}
       if (stateRef.current.tabs.some((t) => t.id === id)) {
         setTabs((tabs) => tabs.map((t) => t.id === id ? { ...t, mode: "agent" } : t));
         setActiveId(id);
@@ -470,9 +472,10 @@ export default function App() {
 
   const paletteActions: PaletteAction[] = [
     { id: "cmd-settings", title: "Open settings: themes, glass, layout, and preferences", hint: "Ctrl+,", run: () => setSettingsOpen(true) },
-    {id:'cmd-bots',title:'Open bots and schedules',run:()=>setBotPanel('manage')},
-    { id: "cmd-kanban", title: "Open workspace Kanban board", run: () => { if(activeTab?.workspace)setBoardWorkspace(activeTab.workspace); } },
-    { id: "cmd-git", title: "Open Git branches and diff", run: () => { if(activeTab?.workspace)setGitWorkspace(activeTab.workspace); } },
+    { id: 'cmd-bots', title: 'Open bots and schedules', run: () => setBotPanel('manage') },
+    { id: "cmd-kanban", title: "Open workspace Kanban board", run: () => { if(activeTab?.workspace) setBoardWorkspace(activeTab.workspace); } },
+    { id: "cmd-git", title: "Open Git branches and diff", run: () => { if(activeTab?.workspace) { setGitInitialMode("workstation"); setGitWorkspace(activeTab.workspace); } } },
+    { id: "cmd-github", title: "Open GitHub Hub: pull requests, issues, and repository", run: () => { if(activeTab?.workspace) { setGitInitialMode("github"); setGitWorkspace(activeTab.workspace); } } },
     { id: "cmd-plugins", title: "Manage plugins", run: () => setPluginPanel({}) },
     ...plugins.filter(p => p.enabled).flatMap(p => p.manifest.commands.map(c => ({ id: `plugin-${p.manifest.id}-${c.id}`, title: `${c.title} · ${p.manifest.name}`, run: () => setPluginPanel({ selection: { id: p.manifest.id, command: c.id } }) }))),
     { id:"cmd-memory", title:"Open project memory vault", run:()=>{ if(activeTab?.workspace)setMemory({workspace:activeTab.workspace}); } },
@@ -543,7 +546,7 @@ export default function App() {
         )}
         {activeTab?.mode === "terminal" && <button type="button" className="status-btn" onClick={clearActive}>Clear</button>}
         <button type="button" aria-label="Memory" title={guidanceReviewCount ? `${guidanceReviewCount} suggestions to review` : "Project guidance and saved notes"} className="status-btn" disabled={!activeTab?.workspace} onClick={()=>{if(activeTab?.workspace)setMemory({workspace:activeTab.workspace,bot_id:activeTab.bot_id,initialFilter:guidanceReviewCount?'pending':'active'});}}><Icon name="memory" size={17}/><span>Memory</span>{guidanceReviewCount>0&&<span className="guidance-review-count" aria-label={`${guidanceReviewCount} suggestions to review`}>{guidanceReviewCount}</span>}</button>
-        <button type="button" aria-label="Git branches and diff" title="Branches, working-tree status and diffs (read-only)" className="status-btn" disabled={!activeTab?.workspace} onClick={()=>{if(activeTab?.workspace)setGitWorkspace(activeTab.workspace);}}><Icon name="code" size={17}/><span>Git</span></button>
+        <button type="button" aria-label="Git branches and diff" title="Git workstation, diffs, and GitHub Hub" className="status-btn" disabled={!activeTab?.workspace} onClick={()=>{if(activeTab?.workspace){setGitInitialMode("workstation");setGitWorkspace(activeTab.workspace);}}}><Icon name="code" size={17}/><span>Git</span></button>
         <button type="button" className={`restart-btn${failed ? " primary" : ""}`} onClick={restartActive} aria-label="Restart" title="Restart this session">
           <Icon name="reset" size={17} />
         </button>
@@ -624,10 +627,10 @@ export default function App() {
       {settingsOpen && <Suspense fallback={null}><SettingsPanel initialPage={settingsPage} updates={updates} onClose={() => { setSettingsOpen(false); setSettingsPage("appearance"); }} notifications={{ enabled: desktop.notifications_enabled, toggle: toggleNotifications, test: testNotification }} /></Suspense>}
       {remoteOpen && <Suspense fallback={null}><RemotePanel onClose={() => setRemoteOpen(false)} /></Suspense>}
       {boardWorkspace && <Suspense fallback={null}><KanbanPanel workspace={boardWorkspace} bots={bots} previewSchedule={(cron,timezone)=>invoke('automation_request',{request:{action:'preview',cron,timezone}})} request={request=>invoke<Board>("kanban_request",{workspace:boardWorkspace,request})} onClose={()=>setBoardWorkspace(null)} onWork={workOnCard}/></Suspense>}
-      {gitWorkspace && <Suspense fallback={null}><GitPanel workspace={gitWorkspace} onClose={()=>{setGitWorkspace(null);setGitTick((t)=>t+1);}} /></Suspense>}
+      {gitWorkspace && <Suspense fallback={null}><GitPanel workspace={gitWorkspace} initialViewMode={gitInitialMode} onClose={()=>{setGitWorkspace(null);setGitTick((t)=>t+1);}} /></Suspense>}
       {pluginPanel && <Suspense fallback={null}><PluginPanel plugins={plugins} selection={pluginPanel.selection} onClose={() => setPluginPanel(null)} onRefresh={refreshPlugins} workspace={activeTab?.workspace || ""} messages={() => pluginHandles.current.get(activeTab?.id)?.messages() || []} onInsert={text => { pluginHandles.current.get(activeTab?.id)?.insert(text); focusComposer(); }} /></Suspense>}
       {memory&&<Suspense fallback={null}><MemoryPanel initialFilter={memory.initialFilter} ownerName={bots.find(b=>b.id===memory.bot_id)?.name} seed={memory.seed} onClose={()=>setMemory(null)} request={(request)=>invoke<MemoryView>(memory.bot_id?'bots_memory':'memory_request',{workspace:memory.workspace,request,id:memory.bot_id})} openVault={()=>memory.bot_id?invoke('bots_open',{id:memory.bot_id,memory:true}):invoke("memory_open")}/></Suspense>}
-      {botPanel&&<Suspense fallback={null}><BotsPanel renderInteractions={id => <DesktopInteractions key={id} sessionId={id}/>} initialPage={botPanel==='activity'?'activity':'profiles'} openMemory={id=>invoke('bots_open',{id,memory:true})} workspace={activeTab?.workspace||''} provider={activeTab?.provider||'muse'} options={activeTab?.options||{model:'',reasoning:''}} request={request=>invoke<BotView>('bots_request',{request})} automation={request=>invoke('automation_request',{request})} memory={(id,request)=>invoke<MemoryView>('bots_memory',{id,workspace:activeTab?.workspace||'',request})} loadModels={(provider,refresh)=>invoke<ModelCatalog>('provider_models',{provider,refresh})} openFolder={id=>invoke('bots_open',{id})} onClose={()=>setBotPanel(null)} chatLabel={botPanel==='handoff'?'Hand off':'Chat'} onChat={openBot} onChange={()=>void refreshBots()}/></Suspense>}
+      {botPanel&&<Suspense fallback={null}><BotsPanel initialRunSessionId={botRunTarget} renderInteractions={id => <DesktopInteractions key={id} sessionId={id}/>} initialPage={botPanel==='activity'?'activity':'profiles'} openMemory={id=>invoke('bots_open',{id,memory:true})} workspace={activeTab?.workspace||''} provider={activeTab?.provider||'muse'} options={activeTab?.options||{model:'',reasoning:''}} request={request=>invoke<BotView>('bots_request',{request})} automation={request=>invoke('automation_request',{request})} memory={(id,request)=>invoke<MemoryView>('bots_memory',{id,workspace:activeTab?.workspace||'',request})} loadModels={(provider,refresh)=>invoke<ModelCatalog>('provider_models',{provider,refresh})} openFolder={id=>invoke('bots_open',{id})} onClose={()=>{setBotPanel(null);setBotRunTarget(undefined);}} chatLabel={botPanel==='handoff'?'Hand off':'Chat'} onChat={openBot} onChange={()=>void refreshBots()}/></Suspense>}
     </div>
   );
 }

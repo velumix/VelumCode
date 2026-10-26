@@ -155,6 +155,7 @@ kbd { font: inherit; }
 .status-dot.idle, .status-dot.done { background: var(--ok); }
 .status-dot.starting, .status-dot.running { background: var(--blue); }
 .status-dot.running { animation: pulse 1.8s ease-in-out infinite; }
+.status-dot.running.waiting { background: var(--warning, #e5b567); animation: pulse 1.2s ease-in-out infinite; }
 .status-dot.error, .status-dot.exited { background: var(--danger); }
 .status-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .status-spacer { flex: 1; }

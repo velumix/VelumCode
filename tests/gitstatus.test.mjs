@@ -55,12 +55,12 @@ test("gitStatus describes files in plain language", async () => {
 test("gitStatus parses renames, CRLF and short lines", async () => {
   const { parseStatus } = await loadGitStatus();
   const { header, files } = parseStatus(
-    "## main...origin/main\r\n M src/App.tsx\r\nR  old.tsx -> new.tsx\r\n?? added.tsx\r\nX\r\n",
+    "## main...origin/main\r\n M src/App.tsx\r\nR  old.tsx -> new.tsx\r\n?? added.tsx\r\n?? \"path with spaces.ts\"\r\nX\r\n",
   );
   assert.equal(header, "main...origin/main");
   assert.deepEqual(
     files.map((f) => f.path),
-    ["src/App.tsx", "new.tsx", "added.tsx"],
+    ["src/App.tsx", "new.tsx", "added.tsx", "path with spaces.ts"],
   );
 });
 

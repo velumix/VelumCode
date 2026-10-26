@@ -94,6 +94,26 @@ export default function KanbanPanel({
     return () => clearInterval(timer);
   }, []);
   useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
+      import("@tauri-apps/api/event")
+        .then(({ listen }) =>
+          listen<string>("kanban-changed", (event) => {
+            if (event.payload === workspace && !dirty) {
+              void perform({ action: "load" });
+            }
+          }),
+        )
+        .then((fn) => {
+          unlisten = fn;
+        })
+        .catch(() => {});
+    }
+    return () => {
+      unlisten?.();
+    };
+  }, [workspace, dirty]);
+  useEffect(() => {
     const previous = document.activeElement as HTMLElement;
     panel.current?.focus();
     return () => previous?.focus();
@@ -809,6 +829,27 @@ export default function KanbanPanel({
                                 }
                               >
                                 ↑
+                              </button>
+                              <button
+                                aria-label={`Move ${card.title} down`}
+                                disabled={
+                                  busy ||
+                                  readOnly ||
+                                  index === cards.length - 1 ||
+                                  !!search ||
+                                  view !== "board"
+                                }
+                                onClick={() =>
+                                  move(
+                                    card,
+                                    column.id,
+                                    index + 2 < cards.length
+                                      ? cards[index + 2].id
+                                      : null,
+                                  )
+                                }
+                              >
+                                ↓
                               </button>
                             </div>
                             {card.column === "review" && !readOnly && (

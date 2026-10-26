@@ -56,3 +56,20 @@ export const emptyInteractions = (): InteractionSnapshot => ({ generation: '', r
 export function mergeInteractionResponse(current: InteractionSnapshot, next: InteractionSnapshot): InteractionSnapshot {
   return current.generation === next.generation && next.revision >= current.revision ? next : current;
 }
+
+/** Live event/poll updates advance across turn generations while rejecting late arrivals from retired turns. */
+export function applyInteractionEvent(
+  current: InteractionSnapshot,
+  next: InteractionSnapshot,
+  seenGenerations: Set<string>,
+): InteractionSnapshot {
+  if (current.generation) seenGenerations.add(current.generation);
+  if (current.generation === next.generation) {
+    return mergeInteractionResponse(current, next);
+  }
+  if (next.generation && seenGenerations.has(next.generation)) {
+    return current;
+  }
+  if (next.generation) seenGenerations.add(next.generation);
+  return next;
+}

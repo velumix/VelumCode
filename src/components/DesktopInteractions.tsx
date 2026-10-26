@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import InteractionPanel from './InteractionPanel';
-import { emptyInteractions, mergeInteractionResponse, type InteractionSnapshot } from '../interactions';
+import { applyInteractionEvent, emptyInteractions, mergeInteractionResponse, type InteractionSnapshot } from '../interactions';
 
 /** Live scheduled sessions have no mounted ChatView of their own. */
 export default function DesktopInteractions({ sessionId }: { sessionId: string }) {
@@ -11,16 +11,19 @@ export default function DesktopInteractions({ sessionId }: { sessionId: string }
   useEffect(() => {
     let closed = false, version = 0;
     let unlisten: (() => void) | undefined;
+    const seenGenerations = new Set<string>();
     setSnapshot(emptyInteractions());
     refresh.current = async () => {
       const before = version;
       const next = await invoke<InteractionSnapshot>('agent_interactions', {id: sessionId});
-      if (!closed && before === version) setSnapshot(next);
+      if (!closed && before === version) {
+        setSnapshot(previous => applyInteractionEvent(previous, next, seenGenerations));
+      }
     };
     void listen<{ id: string; snapshot: InteractionSnapshot }>('agent-interactions', event => {
       if (closed || event.payload.id !== sessionId) return;
       version++;
-      setSnapshot(previous => previous.generation === event.payload.snapshot.generation ? mergeInteractionResponse(previous, event.payload.snapshot) : event.payload.snapshot);
+      setSnapshot(previous => applyInteractionEvent(previous, event.payload.snapshot, seenGenerations));
     }).then(stop => {
       if (closed) stop();
       else { unlisten = stop; void refresh.current().catch(() => {}); }
