@@ -142,20 +142,48 @@ pub struct GitHubAuthStatus {
 }
 
 pub fn parse_github_remote(url: &str) -> Option<String> {
-    let url = url.trim().trim_end_matches('/');
-    let url = url.strip_suffix(".git").unwrap_or(url);
-    if let Some(rest) = url.strip_prefix("https://github.com/") {
+    let mut url = url.trim().trim_end_matches('/');
+    url = url.strip_suffix(".git").unwrap_or(url);
+
+    // Strip common protocol prefixes
+    let without_proto = if let Some(rest) = url.strip_prefix("git+ssh://") {
+        rest
+    } else if let Some(rest) = url.strip_prefix("ssh://") {
+        rest
+    } else if let Some(rest) = url.strip_prefix("https://") {
+        rest
+    } else if let Some(rest) = url.strip_prefix("http://") {
+        rest
+    } else if let Some(rest) = url.strip_prefix("git://") {
+        rest
+    } else {
+        url
+    };
+
+    // If there is userinfo (e.g. "git@" or "token@" or "user:token@"), strip it
+    let host_and_path = if let Some((_user, host_part)) = without_proto.split_once('@') {
+        host_part
+    } else {
+        without_proto
+    };
+
+    // Match github.com followed by either '/' or ':' or ':22/'
+    if let Some(rest) = host_and_path.strip_prefix("github.com/") {
         return parse_github_repo_name(rest).ok();
     }
-    if let Some(rest) = url.strip_prefix("http://github.com/") {
+    if let Some(rest) = host_and_path.strip_prefix("github.com:") {
+        let rest = if let Some((port, path)) = rest.split_once('/') {
+            if port.chars().all(|c| c.is_ascii_digit()) {
+                path
+            } else {
+                rest
+            }
+        } else {
+            rest
+        };
         return parse_github_repo_name(rest).ok();
     }
-    if let Some(rest) = url.strip_prefix("git@github.com:") {
-        return parse_github_repo_name(rest).ok();
-    }
-    if let Some(rest) = url.strip_prefix("ssh://git@github.com/") {
-        return parse_github_repo_name(rest).ok();
-    }
+
     None
 }
 
@@ -738,4 +766,75 @@ pub async fn github_create_issue(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_various_github_remote_urls() {
+        assert_eq!(
+            parse_github_remote("https://github.com/velumix/VelumCode.git"),
+            Some("velumix/VelumCode".into())
+        );
+        assert_eq!(
+            parse_github_remote("https://github.com/velumix/VelumCode/"),
+            Some("velumix/VelumCode".into())
+        );
+        assert_eq!(
+            parse_github_remote("git@github.com:velumix/VelumCode.git"),
+            Some("velumix/VelumCode".into())
+        );
+        assert_eq!(
+            parse_github_remote("ssh://git@github.com/velumix/VelumCode.git"),
+            Some("velumix/VelumCode".into())
+        );
+        assert_eq!(
+            parse_github_remote("ssh://git@github.com:velumix/VelumCode.git"),
+            Some("velumix/VelumCode".into())
+        );
+        assert_eq!(
+            parse_github_remote(
+                "https://x-access-token:ghp_secretToken12345@github.com/velumix/VelumCode.git"
+            ),
+            Some("velumix/VelumCode".into())
+        );
+        assert_eq!(
+            parse_github_remote("ssh://git@github.com:22/velumix/VelumCode.git"),
+            Some("velumix/VelumCode".into())
+        );
+        assert_eq!(
+            parse_github_remote("git://github.com/velumix/VelumCode.git"),
+            Some("velumix/VelumCode".into())
+        );
+        assert_eq!(
+            parse_github_remote("git+ssh://git@github.com/velumix/VelumCode.git"),
+            Some("velumix/VelumCode".into())
+        );
+        assert_eq!(parse_github_remote("https://gitlab.com/other/repo.git"), None);
+        assert_eq!(parse_github_remote("not-a-url"), None);
+    }
+
+    #[test]
+    fn parses_and_validates_repo_names() {
+        assert_eq!(
+            parse_github_repo_name("velumix/VelumCode").unwrap(),
+            "velumix/VelumCode"
+        );
+        assert_eq!(
+            parse_github_repo_name("https://github.com/org-name/repo_name.js.git").unwrap(),
+            "org-name/repo_name.js"
+        );
+        assert!(parse_github_repo_name("single-word").is_err());
+        assert!(parse_github_repo_name("bad/repo/extra").is_err());
+        assert!(parse_github_repo_name("inv@lid/repo").is_err());
+    }
+
+    #[test]
+    fn credentials_default_to_none() {
+        let creds = GitHubCredentials::default();
+        assert!(creds.token.is_none());
+        assert!(creds.preferred_auth.is_none());
+    }
 }

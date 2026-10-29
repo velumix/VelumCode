@@ -11,6 +11,7 @@ mod history;
 mod interactions;
 mod kanban;
 mod memory;
+mod memory_v2;
 mod message_queue;
 mod muse_msp;
 mod muse_view;

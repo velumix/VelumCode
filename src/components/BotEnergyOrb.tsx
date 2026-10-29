@@ -68,6 +68,7 @@ export default function BotEnergyOrb({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef({ color, status, seed });
   stateRef.current = { color, status, seed };
+  const maybeStartRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -92,16 +93,17 @@ export default function BotEnergyOrb({
       "(prefers-reduced-motion: reduce)",
     ).matches;
 
-    // Cache computed palette to avoid per-frame hex parsing and mixing
+    // Cache computed palette and core gradient to avoid per-frame allocations
     let cachedColor = "";
     let cachedMode = "";
     let cachedBase: [number, number, number] = [121, 169, 255];
     let cachedTint: [number, number, number] = [121, 169, 255];
     let cachedLight: [number, number, number] = [255, 255, 255];
     let cachedDark: [number, number, number] = [8, 12, 24];
+    let cachedCoreGradient: CanvasGradient | null = null;
 
     const getPalette = (currentColor: string, currentMode: OrbStatus) => {
-      if (currentColor !== cachedColor || currentMode !== cachedMode) {
+      if (currentColor !== cachedColor || currentMode !== cachedMode || !cachedCoreGradient) {
         cachedColor = currentColor;
         cachedMode = currentMode;
         cachedBase = hexToRgb(currentColor);
@@ -117,18 +119,28 @@ export default function BotEnergyOrb({
           currentMode === "disabled" ? 0.25 : 0.55,
         );
         cachedDark = mix(cachedTint, [8, 12, 24], 0.72);
+
+        const cx = canvas.width / 2;
+        const cy = canvas.height / 2;
+        const r = Math.min(canvas.width, canvas.height) / 2;
+        const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+        core.addColorStop(0, css(cachedLight, currentMode === "disabled" ? 0.9 : 0.95));
+        core.addColorStop(0.35, css(cachedTint, currentMode === "disabled" ? 0.75 : 0.9));
+        core.addColorStop(1, css(cachedDark, 1));
+        cachedCoreGradient = core;
       }
       return {
         base: cachedBase,
         tint: cachedTint,
         light: cachedLight,
         dark: cachedDark,
+        core: cachedCoreGradient,
       };
     };
 
     const draw = (phaseAcc: number, pulseAcc: number) => {
       const { color: current, status: mode } = stateRef.current;
-      const { tint, light, dark } = getPalette(current, mode);
+      const { tint, light, core } = getPalette(current, mode);
 
       const w = canvas.width;
       const h = canvas.height;
@@ -142,11 +154,7 @@ export default function BotEnergyOrb({
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.clip();
 
-      // Deep core.
-      const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-      core.addColorStop(0, css(light, mode === "disabled" ? 0.9 : 0.95));
-      core.addColorStop(0.35, css(tint, mode === "disabled" ? 0.75 : 0.9));
-      core.addColorStop(1, css(dark, 1));
+      // Deep core (reusing cached gradient)
       ctx.fillStyle = core;
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
@@ -254,14 +262,20 @@ export default function BotEnergyOrb({
           });
     if (observer) observer.observe(canvas);
     document.addEventListener("visibilitychange", maybeStart);
+    maybeStartRef.current = maybeStart;
     maybeStart();
 
     return () => {
       observer?.disconnect();
       document.removeEventListener("visibilitychange", maybeStart);
+      maybeStartRef.current = () => {};
       stop();
     };
   }, [size]);
+
+  useEffect(() => {
+    maybeStartRef.current();
+  }, [status, color]);
 
   return (
     <canvas

@@ -58,3 +58,33 @@ test("GitHub Hub displays account identity, repository stats, pulls, and issues 
   await page.getByRole("button", { name: "Close Git panel", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
+
+test("GitHub Hub filters pulls and issues by search term and copies markdown references", async ({ page }) => {
+  await boot(page);
+  await page.getByRole("button", { name: "Git branches and diff", exact: true }).click();
+  await page.getByRole("button", { name: "GitHub Hub", exact: true }).click();
+
+  // Test Pull Requests search filter
+  await page.getByRole("button", { name: "Pull Requests", exact: true }).click();
+  await expect(page.getByText("#42")).toBeVisible();
+  const prSearch = page.getByPlaceholder("Filter pull requests…");
+  await expect(prSearch).toBeVisible();
+  await prSearch.fill("nonexistent keyword");
+  await expect(page.getByText(/No pull requests match/)).toBeVisible();
+  await prSearch.fill("42");
+  await expect(page.getByText("#42")).toBeVisible();
+  await page.getByRole("button", { name: "Copy Ref" }).first().click();
+  await expect(page.getByRole("button", { name: "Copied" })).toBeVisible();
+
+  // Test Issues search filter
+  await page.getByRole("button", { name: "Issues", exact: true }).click();
+  await expect(page.getByText("#10")).toBeVisible();
+  const issueSearch = page.getByPlaceholder("Filter issues…");
+  await expect(issueSearch).toBeVisible();
+  await issueSearch.fill("browser");
+  await expect(page.getByText("#10")).toBeVisible();
+  await issueSearch.fill("xyz-not-found");
+  await expect(page.getByText(/No issues match/)).toBeVisible();
+  await page.getByRole("button", { name: "Clear search" }).click();
+  await expect(page.getByText("#10")).toBeVisible();
+});

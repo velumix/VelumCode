@@ -168,7 +168,7 @@ export default function SessionDashboard({
     [workspace, gitState?.current],
   );
 
-  // Sync selectedDiffFile with parsed files without hijacking active tab
+  // Sync selectedDiffFile with parsed files and lazily load diff only when diff tab is active
   useEffect(() => {
     if (parsedGit.files.length === 0) {
       if (selectedDiffFile) onSelectDiffFile(null);
@@ -178,15 +178,15 @@ export default function SessionDashboard({
     if (selectedDiffFile && !parsedGit.files.some((f) => f.path === selectedDiffFile)) {
       const fallback = parsedGit.files[0]!.path;
       onSelectDiffFile(fallback);
-      void loadDiff(fallback);
+      if (activeTab === "diff") void loadDiff(fallback);
     } else if (!selectedDiffFile && parsedGit.files.length > 0) {
       const first = parsedGit.files[0]!.path;
       onSelectDiffFile(first);
-      void loadDiff(first);
-    } else if (selectedDiffFile) {
+      if (activeTab === "diff") void loadDiff(first);
+    } else if (selectedDiffFile && activeTab === "diff") {
       void loadDiff(selectedDiffFile);
     }
-  }, [selectedDiffFile, parsedGit.files, loadDiff, onSelectDiffFile]);
+  }, [selectedDiffFile, parsedGit.files, loadDiff, onSelectDiffFile, activeTab]);
 
   // Extract tools from blocks
   const toolActions = useMemo<ToolActionSummary[]>(() => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import Icon from "./Icon";
@@ -34,6 +34,7 @@ export default function GitHubHub({ workspace, onClose, embedded = false, onInse
   const [pulls, setPulls] = useState<GitHubPullRequest[]>([]);
   const [issues, setIssues] = useState<GitHubIssue[]>([]);
   const [filterState, setFilterState] = useState<"open" | "closed" | "all">("open");
+  const [searchQuery, setSearchQuery] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
@@ -44,6 +45,31 @@ export default function GitHubHub({ workspace, onClose, embedded = false, onInse
   const [kanbanStatus, setKanbanStatus] = useState<{ id: number; message: string } | null>(null);
   const pullSeqRef = useRef(0);
   const issueSeqRef = useRef(0);
+
+  const filteredPulls = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return pulls;
+    return pulls.filter(
+      (p) =>
+        p.title.toLowerCase().includes(q) ||
+        String(p.number).includes(q) ||
+        p.user_login.toLowerCase().includes(q) ||
+        p.head_ref.toLowerCase().includes(q) ||
+        p.base_ref.toLowerCase().includes(q),
+    );
+  }, [pulls, searchQuery]);
+
+  const filteredIssues = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return issues;
+    return issues.filter(
+      (iss) =>
+        iss.title.toLowerCase().includes(q) ||
+        String(iss.number).includes(q) ||
+        iss.user_login.toLowerCase().includes(q) ||
+        iss.labels.some((l) => l.name.toLowerCase().includes(q)),
+    );
+  }, [issues, searchQuery]);
 
   // Create issue form state
   const [showNewIssue, setShowNewIssue] = useState(false);
@@ -131,39 +157,54 @@ export default function GitHubHub({ workspace, onClose, embedded = false, onInse
     body?: string | null;
   }) => {
     if (!workspace) return;
-    try {
-      const board = await invoke<{ revision: number }>("kanban_request", {
-        workspace,
-        request: { action: "load" },
-      });
-      await invoke("kanban_request", {
-        workspace,
-        request: {
-          action: "save",
-          revision: board.revision,
-          card: {
-            id: crypto.randomUUID(),
-            title: `[GH #${item.number}] ${item.title}`,
-            description: `${item.html_url}${item.body ? `\n\n${item.body}` : ""}`.trim(),
-            column: "backlog",
-            priority: "normal",
+    let saved = false;
+    let lastErr: unknown = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const board = await invoke<{ revision: number }>("kanban_request", {
+          workspace,
+          request: { action: "load" },
+        });
+        await invoke("kanban_request", {
+          workspace,
+          request: {
+            action: "save",
+            revision: board.revision,
+            card: {
+              id: crypto.randomUUID(),
+              title: `[GH #${item.number}] ${item.title}`,
+              description: `${item.html_url}${item.body ? `\n\n${item.body}` : ""}`.trim(),
+              column: "backlog",
+              priority: "normal",
+            },
           },
-        },
-      });
+        });
+        saved = true;
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 60 * (attempt + 1)));
+      }
+    }
+    if (saved) {
       setKanbanStatus({ id: item.number, message: "Added!" });
       setTimeout(
         () =>
           setKanbanStatus((curr) => (curr?.id === item.number ? null : curr)),
         2500,
       );
-    } catch (err) {
-      setError(`Failed to add to Kanban: ${err}`);
+    } else {
+      setError(`Failed to add to Kanban: ${lastErr}`);
     }
   };
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    setSearchQuery("");
+  }, [tab]);
 
   useEffect(() => {
     if (tab === "pulls") {
@@ -541,6 +582,27 @@ export default function GitHubHub({ workspace, onClose, embedded = false, onInse
                   </button>
                 ))}
               </div>
+              <div className="github-search-box">
+                <Icon name="search" size={13} />
+                <input
+                  type="search"
+                  className="github-search-input"
+                  placeholder="Filter pull requests…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  aria-label="Filter pull requests"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    className="github-search-clear"
+                    aria-label="Clear search"
+                    onClick={() => setSearchQuery("")}
+                  >
+                    <Icon name="close" size={12} />
+                  </button>
+                )}
+              </div>
               <button
                 type="button"
                 className="github-btn-secondary"
@@ -556,14 +618,18 @@ export default function GitHubHub({ workspace, onClose, embedded = false, onInse
               </button>
             </div>
 
-            {pulls.length === 0 ? (
+            {filteredPulls.length === 0 ? (
               <div className="github-empty-list">
                 <Icon name="pr" size={32} />
-                <p>No {filterState} pull requests found for this repository.</p>
+                <p>
+                  {searchQuery
+                    ? `No pull requests match "${searchQuery}".`
+                    : `No ${filterState} pull requests found for this repository.`}
+                </p>
               </div>
             ) : (
               <ul className="github-item-list">
-                {pulls.map((pr) => (
+                {filteredPulls.map((pr) => (
                   <li key={pr.number} className="github-list-item">
                     <div className="github-item-main">
                       <div className="github-item-title-row">
@@ -600,6 +666,20 @@ export default function GitHubHub({ workspace, onClose, embedded = false, onInse
                       </div>
                     </div>
                     <div className="github-item-actions">
+                      <button
+                        type="button"
+                        className="github-btn-action"
+                        onClick={() =>
+                          copyToClipboard(
+                            `[#${pr.number}: ${pr.title}](${pr.html_url})`,
+                            `pr-${pr.number}`,
+                          )
+                        }
+                        title="Copy Markdown reference"
+                      >
+                        <Icon name="copy" size={13} />{" "}
+                        {copiedUrl === `pr-${pr.number}` ? "Copied" : "Copy Ref"}
+                      </button>
                       <button
                         type="button"
                         className="github-btn-action"
@@ -654,6 +734,27 @@ export default function GitHubHub({ workspace, onClose, embedded = false, onInse
                     {s.toUpperCase()}
                   </button>
                 ))}
+              </div>
+              <div className="github-search-box">
+                <Icon name="search" size={13} />
+                <input
+                  type="search"
+                  className="github-search-input"
+                  placeholder="Filter issues…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  aria-label="Filter issues"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    className="github-search-clear"
+                    aria-label="Clear search"
+                    onClick={() => setSearchQuery("")}
+                  >
+                    <Icon name="close" size={12} />
+                  </button>
+                )}
               </div>
               <div className="github-row-gap">
                 <button
@@ -716,14 +817,18 @@ export default function GitHubHub({ workspace, onClose, embedded = false, onInse
               </form>
             )}
 
-            {issues.length === 0 ? (
+            {filteredIssues.length === 0 ? (
               <div className="github-empty-list">
                 <Icon name="issue" size={32} />
-                <p>No {filterState} issues found for this repository.</p>
+                <p>
+                  {searchQuery
+                    ? `No issues match "${searchQuery}".`
+                    : `No ${filterState} issues found for this repository.`}
+                </p>
               </div>
             ) : (
               <ul className="github-item-list">
-                {issues.map((iss) => (
+                {filteredIssues.map((iss) => (
                   <li key={iss.number} className="github-list-item">
                     <div className="github-item-main">
                       <div className="github-item-title-row">
@@ -771,6 +876,22 @@ export default function GitHubHub({ workspace, onClose, embedded = false, onInse
                       </div>
                     </div>
                     <div className="github-item-actions">
+                      <button
+                        type="button"
+                        className="github-btn-action"
+                        onClick={() =>
+                          copyToClipboard(
+                            `[#${iss.number}: ${iss.title}](${iss.html_url})`,
+                            `issue-${iss.number}`,
+                          )
+                        }
+                        title="Copy Markdown reference"
+                      >
+                        <Icon name="copy" size={13} />{" "}
+                        {copiedUrl === `issue-${iss.number}`
+                          ? "Copied"
+                          : "Copy Ref"}
+                      </button>
                       <button
                         type="button"
                         className="github-btn-action"

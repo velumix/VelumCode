@@ -3,6 +3,7 @@ import { expect, type Page } from "@playwright/test";
 // Native process/CLI behavior is covered separately; no provider calls here.
 export async function revealAssistant(page: Page) {
   const toggle = page.getByRole('button',{name:'Assistant settings',exact:true});
+  await toggle.waitFor({ state: "attached" }).catch(() => {});
   if(await toggle.count() && await toggle.getAttribute('aria-expanded')==='false') await toggle.click();
 }
 export async function revealWorkspace(page: Page) {
