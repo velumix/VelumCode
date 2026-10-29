@@ -812,7 +812,10 @@ mod tests {
             parse_github_remote("git+ssh://git@github.com/velumix/VelumCode.git"),
             Some("velumix/VelumCode".into())
         );
-        assert_eq!(parse_github_remote("https://gitlab.com/other/repo.git"), None);
+        assert_eq!(
+            parse_github_remote("https://gitlab.com/other/repo.git"),
+            None
+        );
         assert_eq!(parse_github_remote("not-a-url"), None);
     }
 
