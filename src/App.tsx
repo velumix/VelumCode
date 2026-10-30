@@ -678,7 +678,6 @@ export default function App() {
       <main className="conversation-pane" aria-label="Current conversation">
       <div className="conversation-toolbar">
         <div className="conversation-heading">
-          <span className="section-label">Your space to create</span>
           <h1>{activeTab ? conversationTitle(activeTab.title) : "New conversation"}</h1>
         </div>
         {activeTab && (
@@ -785,8 +784,8 @@ export default function App() {
           {versionFooterContent(updates)}
         </button>
         <button type="button" className="notification-toggle" onClick={() => setRemoteOpen(true)}><Icon name="phone" size={13} />Connect phone</button>
-        <button type="button" className="notification-toggle" aria-label="Background notifications" aria-pressed={desktop.notifications_enabled} title={desktop.notifications_enabled ? "Background notifications on — click to mute" : "Background notifications muted — click to enable"} onClick={() => void toggleNotifications()}><Icon name="bell" size={13} />{desktop.notifications_enabled ? "Notifications on" : "Notifications muted"}</button>
-        <span className="footer-hint" title="Closing the window keeps Velum Code running. Use the tray menu or Ctrl+K → Quit to exit.">Runs in tray</span>
+        <button type="button" className="notification-toggle" aria-label="Background notifications" aria-pressed={desktop.notifications_enabled} title={desktop.notifications_enabled ? "Background notifications on — click to mute" : "Background notifications muted — click to enable"} onClick={() => void toggleNotifications()}><Icon name="bell" size={13} /><span>{desktop.notifications_enabled ? "Alerts" : "Muted"}</span></button>
+        <span className="footer-hint footer-tray-pill" title="Closing the window keeps Velum Code running in the system tray. Use the tray menu or Ctrl+K → Quit to exit."><Icon name="shield" size={11} /><span>Tray</span></span>
       </footer>
       </main>
       </div>

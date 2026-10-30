@@ -49,6 +49,8 @@ type Block =
       output: string;
       result?: string;
       reason?: string;
+      startedAt?: number;
+      durationMs?: number;
     }
   | { id: number; kind: "notice"; text: string; tone: "info" | "error"; recovery?: RecoverableRequest }
   | { id: number; kind: "approval"; tool?: string; summary: string; status: string };
@@ -222,6 +224,13 @@ function fmtElapsed(ms: number): string {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
+function fmtToolDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = ms / 1000;
+  if (s < 10) return `${s.toFixed(1)}s`;
+  return fmtElapsed(ms);
+}
+
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -244,6 +253,29 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+function ToolCopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className={`tool-output-copy${copied ? " copied" : ""}`}
+      aria-label={copied ? "Tool output copied" : "Copy tool output"}
+      title={copied ? "Copied" : "Copy output"}
+      onClick={(e) => {
+        e.stopPropagation();
+        void copyText(text).then((ok) => {
+          if (!ok) return;
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1200);
+        });
+      }}
+    >
+      <Icon name={copied ? "check" : "copy"} size={12} />
+      <span>{copied ? "Copied" : "Copy"}</span>
+    </button>
+  );
+}
+
 function ToolBlock({ block }: { block: Extract<Block, { kind: "tool" }> }) {
   const { settings } = usePreferences();
   const [override, setOverride] = useState<boolean | null>(null);
@@ -258,6 +290,11 @@ function ToolBlock({ block }: { block: Extract<Block, { kind: "tool" }> }) {
         <span className="tool-name" title={block.name}>
           {friendlyTool(block.name)}
         </span>
+        {block.durationMs != null && (
+          <span className="tool-duration" title={`Execution duration: ${fmtToolDuration(block.durationMs)}`}>
+            {fmtToolDuration(block.durationMs)}
+          </span>
+        )}
         <span className="tool-status">{block.status}</span>
         <span className="tool-caret" aria-hidden="true">
           {open ? "▾" : "▸"}
@@ -266,14 +303,17 @@ function ToolBlock({ block }: { block: Extract<Block, { kind: "tool" }> }) {
       {block.policy && !isPlainAllow(block.policy) && <div className="tool-policy">policy: {block.policy}</div>}
       {block.reason && <div className="tool-reason">{block.reason}</div>}
       {body && (open || settings.toolOutput !== "collapsed") ? (
-        open ? (
-          <pre className="tool-output full">{capped(body)}</pre>
-        ) : (
-          <pre className="tool-output">
-            {capped(head)}
-            {rest > 0 && <span className="tool-more">{`\n…${rest} more lines`}</span>}
-          </pre>
-        )
+        <div className="tool-output-wrap">
+          {open ? (
+            <pre className="tool-output full">{capped(body)}</pre>
+          ) : (
+            <pre className="tool-output">
+              {capped(head)}
+              {rest > 0 && <span className="tool-more">{`\n…${rest} more lines`}</span>}
+            </pre>
+          )}
+          <ToolCopyButton text={body} />
+        </div>
       ) : null}
     </div>
   );
@@ -644,7 +684,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
             if (prev.some((b) => b.kind === "tool" && b.taskId === taskId)) return prev;
             return [
               ...prev,
-              { id: ++idRef.current, kind: "tool", taskId, name, status: "running", output: "" },
+              { id: ++idRef.current, kind: "tool", taskId, name, status: "running", output: "", startedAt: Date.now() },
             ];
           });
           break;
@@ -672,9 +712,17 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
           const status = asString(e.status) ?? "completed";
           const reason = asString(e.reason);
           if (!taskId) break;
+          const now = Date.now();
           setBlocks((prev) =>
             prev.map((b) =>
-              b.kind === "tool" && b.taskId === taskId ? { ...b, status, reason } : b,
+              b.kind === "tool" && b.taskId === taskId
+                ? {
+                    ...b,
+                    status,
+                    reason,
+                    durationMs: b.startedAt ? Math.max(1, now - b.startedAt) : b.durationMs,
+                  }
+                : b,
             ),
           );
           break;
