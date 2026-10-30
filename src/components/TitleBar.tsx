@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import Icon, { VelumMark } from "./Icon";
+import type { UpdateStatus } from "../updates";
 
 function MinimizeIcon() {
   return (
@@ -36,9 +37,22 @@ function CloseIcon() {
   );
 }
 
-export default function TitleBar({ onCommands }: { onCommands: () => void }) {
+export default function TitleBar({
+  onCommands,
+  updates,
+  onOpenUpdates,
+}: {
+  onCommands: () => void;
+  updates?: UpdateStatus | null;
+  onOpenUpdates?: () => void;
+}) {
   const [maximized, setMaximized] = useState(false);
   const win = getCurrentWindow();
+  const currentVersion = updates?.current_version || "0.7.15";
+  const hasUpdate = updates?.phase === "available" || updates?.phase === "ready";
+  const versionTitle = hasUpdate
+    ? `Velum Code v${currentVersion} — Update v${updates?.version || "new"} is available. Click to open Updates.`
+    : `Velum Code v${currentVersion} — Click to check for updates`;
 
   useEffect(() => {
     const w = getCurrentWindow();
@@ -73,6 +87,18 @@ export default function TitleBar({ onCommands }: { onCommands: () => void }) {
       <div className="titlebar-brand">
         <VelumMark size={18} />
         <span>Velum Code</span>
+        {currentVersion && (
+          <button
+            type="button"
+            className={`titlebar-version ${hasUpdate ? "has-update" : ""}`}
+            onClick={onOpenUpdates}
+            title={versionTitle}
+            aria-label={`Velum Code version ${currentVersion}${hasUpdate ? `. Update available: ${updates?.version}` : ""}`}
+          >
+            v{currentVersion}
+            {hasUpdate && <span className="titlebar-update-dot" aria-hidden="true" />}
+          </button>
+        )}
       </div>
       <button type="button" className="global-search" onClick={onCommands} aria-label="Search commands and conversations">
         <Icon name="search" size={14} />

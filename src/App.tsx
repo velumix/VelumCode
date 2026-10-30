@@ -95,6 +95,88 @@ function statusText(tab: Tab): string {
   }
 }
 
+function versionFooterContent(updates: ReturnType<typeof useUpdates>) {
+  const current = updates?.current_version || "0.7.15";
+  if (!updates || updates.phase === "idle" || updates.phase === "current") {
+    return (
+      <>
+        <Icon name="check" size={12} />
+        <span>v{current}</span>
+      </>
+    );
+  }
+  if (updates.phase === "checking") {
+    return (
+      <>
+        <span className="status-badge-dot pulse" aria-hidden="true" />
+        <span>v{current} · Checking…</span>
+      </>
+    );
+  }
+  if (updates.phase === "available") {
+    return (
+      <>
+        <Icon name="down" size={12} />
+        <span>v{current} → v{updates.version || "new"}</span>
+      </>
+    );
+  }
+  if (updates.phase === "downloading") {
+    const pct = updates.total && updates.total > 0
+      ? ` ${Math.round((updates.downloaded / updates.total) * 100)}%`
+      : "";
+    return (
+      <>
+        <span className="status-badge-dot pulse" aria-hidden="true" />
+        <span>v{current} · Downloading{pct}…</span>
+      </>
+    );
+  }
+  if (updates.phase === "ready") {
+    return (
+      <>
+        <Icon name="down" size={12} />
+        <span>Update ready · {updates.version || "new"}</span>
+      </>
+    );
+  }
+  if (updates.phase === "error") {
+    return (
+      <>
+        <Icon name="bug" size={12} />
+        <span>v{current} · Update error</span>
+      </>
+    );
+  }
+  return <span>v{current}</span>;
+}
+
+function versionFooterTooltip(updates: ReturnType<typeof useUpdates>) {
+  const current = updates?.current_version || "0.7.15";
+  if (!updates) return `Velum Code v${current} — Click to manage updates`;
+  switch (updates.phase) {
+    case "ready":
+      return `Velum Code v${updates.version} is ready to install. Click to restart.`;
+    case "available":
+      return `Velum Code v${updates.version} is available. Click to download in Settings.`;
+    case "downloading":
+      return `Downloading Velum Code v${updates.version}… Click to view progress in Settings.`;
+    case "checking":
+      return "Checking for Velum Code updates…";
+    case "error":
+      return `Update check error: ${updates.error || "failed"}. Click to view details.`;
+    default:
+      return `Velum Code v${current} (Up to date). Click to check for updates.`;
+  }
+}
+
+function versionFooterAriaLabel(updates: ReturnType<typeof useUpdates>) {
+  const current = updates?.current_version || "0.7.15";
+  if (updates?.phase === "ready") return `Update ready: version ${updates.version}. Current version ${current}. Click to restart.`;
+  if (updates?.phase === "available") return `Update available: version ${updates.version}. Current version ${current}. Click to open updates.`;
+  return `Version ${current}. ${updates?.phase === "checking" ? "Checking for updates." : "Click to manage updates."}`;
+}
+
 export default function App() {
   const updates = useUpdates();
   const {settings} = usePreferences();
@@ -521,7 +603,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <TitleBar onCommands={togglePalette} />
+      <TitleBar onCommands={togglePalette} updates={updates} onOpenUpdates={() => { setSettingsPage("updates"); setSettingsOpen(true); }} />
       {(desktopMessage || desktop.last_error) && <div className={`desktop-notice${desktopMessage?.error || desktop.last_error ? " error" : ""}`} role={desktopMessage?.error || desktop.last_error ? "alert" : "status"}>
         <span>{desktopMessage?.text || desktop.last_error}</span>
         <button type="button" aria-label="Dismiss notification message" onClick={() => { setDesktopMessage(null); setDesktop((s) => ({ ...s, last_error: null })); }}><Icon name="close" size={15} /></button>
@@ -616,7 +698,27 @@ export default function App() {
           </>
         )}
         <span className="status-spacer" />
-        {updates?.phase === "ready" && <button type="button" className="notification-toggle update-ready" onClick={() => { setSettingsPage("updates"); setSettingsOpen(true); }}>Update ready · {updates.version}</button>}
+        <button
+          type="button"
+          className={`notification-toggle statusbar-version ${
+            updates?.phase === "ready"
+              ? "update-ready"
+              : updates?.phase === "available"
+              ? "update-available"
+              : updates?.phase === "downloading"
+              ? "update-downloading"
+              : updates?.phase === "checking"
+              ? "update-checking"
+              : updates?.phase === "error"
+              ? "update-error"
+              : "update-current"
+          }`}
+          onClick={() => { setSettingsPage("updates"); setSettingsOpen(true); }}
+          title={versionFooterTooltip(updates)}
+          aria-label={versionFooterAriaLabel(updates)}
+        >
+          {versionFooterContent(updates)}
+        </button>
         <button type="button" className="notification-toggle" onClick={() => setRemoteOpen(true)}><Icon name="phone" size={13} />Connect phone</button>
         <button type="button" className="notification-toggle" aria-label="Background notifications" aria-pressed={desktop.notifications_enabled} title={desktop.notifications_enabled ? "Background notifications on — click to mute" : "Background notifications muted — click to enable"} onClick={() => void toggleNotifications()}><Icon name="bell" size={13} />{desktop.notifications_enabled ? "Notifications on" : "Notifications muted"}</button>
         <span className="footer-hint" title="Closing the window keeps Velum Code running. Use the tray menu or Ctrl+K → Quit to exit.">Runs in tray</span>

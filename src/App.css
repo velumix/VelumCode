@@ -414,3 +414,90 @@ kbd { font: inherit; }
   .starter-btn:hover:not(:disabled), .starter-btn:active:not(:disabled), .starter-btn:hover:not(:disabled) .starter-icon, .starter-btn:hover:not(:disabled) .starter-arrow, .tab-new:active, .composer-btn:hover:not(:disabled), .composer-btn:active:not(:disabled), .latest-btn:active { transform: none; }
 }
 .notification-toggle.update-ready { color: var(--accent); }
+
+/* TitleBar Version Badge */
+.titlebar-version {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 4px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: calc(10px * var(--ui-scale));
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.titlebar-version:hover {
+  background: var(--accent-dim);
+  color: var(--text);
+  border-color: var(--accent-border);
+}
+.titlebar-version.has-update {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--accent-dim);
+}
+.titlebar-update-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ok);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+@media (max-width: 600px) {
+  .titlebar-version { display: none; }
+}
+
+/* StatusBar Version & Update Monitor */
+.notification-toggle.statusbar-version {
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+  color: var(--muted);
+}
+.notification-toggle.statusbar-version:hover {
+  background: var(--accent-dim);
+  color: var(--text);
+  border-color: var(--border);
+}
+.notification-toggle.statusbar-version.update-available {
+  color: var(--accent, #63a4ff);
+  background: var(--accent-dim);
+  border-color: var(--accent-border);
+  font-weight: 500;
+}
+.notification-toggle.statusbar-version.update-ready {
+  color: #fff;
+  background: var(--ok, #22c55e);
+  border-color: var(--ok, #22c55e);
+  font-weight: 500;
+}
+.notification-toggle.statusbar-version.update-ready:hover {
+  filter: brightness(1.1);
+}
+.notification-toggle.statusbar-version.update-downloading,
+.notification-toggle.statusbar-version.update-checking {
+  color: var(--blue, #3b82f6);
+}
+.notification-toggle.statusbar-version.update-error {
+  color: var(--danger, #ef4444);
+}
+.notification-toggle.statusbar-version .status-badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.notification-toggle.statusbar-version .status-badge-dot.pulse {
+  animation: pulse 1.4s ease-in-out infinite;
+}
