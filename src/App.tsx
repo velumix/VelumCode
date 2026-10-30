@@ -33,7 +33,7 @@ import type { PluginSelection } from "./components/PluginPanel";
 import type { InstalledPlugin, PluginChatHandle } from "./plugins";
 import { loadDesktop, saveDesktop, saveDraft, recoveryError } from "./desktopHistory";
 import { finishStartup } from "./startup";
-import { useUpdates } from "./updates";
+import { useUpdates, checkForUpdates, downloadUpdate, restartToUpdate } from "./updates";
 import type { MemoryView } from "./memory";
 import { preferredProvider, preferredOptions, saveOptions, providerNames, type Provider, type RunOptions } from "./providers";
 
@@ -203,6 +203,19 @@ export default function App() {
   const [gitTick, setGitTick] = useState(0);
   const [desktop, setDesktop] = useState<DesktopStatus>({ notifications_enabled: true, last_error: null });
   const [desktopMessage, setDesktopMessage] = useState<{ text: string; error: boolean } | null>(() => recoveryError ? { text: recoveryError, error: true } : null);
+  const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string | null>(null);
+  useEffect(() => {
+    let lastCheck = 0;
+    const onFocus = () => {
+      const now = Date.now();
+      if (now - lastCheck > 3 * 60 * 1000 && updates?.phase !== "checking" && updates?.phase !== "downloading" && updates?.phase !== "installing") {
+        lastCheck = now;
+        void checkForUpdates();
+      }
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [updates?.phase]);
   useEffect(() => {
     const error = (e:Event) => setDesktopMessage({text:`Recovery could not save: ${(e as CustomEvent<string>).detail}`,error:true});
     window.addEventListener("velum:recovery-error",error);
@@ -608,6 +621,58 @@ export default function App() {
         <span>{desktopMessage?.text || desktop.last_error}</span>
         <button type="button" aria-label="Dismiss notification message" onClick={() => { setDesktopMessage(null); setDesktop((s) => ({ ...s, last_error: null })); }}><Icon name="close" size={15} /></button>
       </div>}
+      {updates?.phase === "ready" && dismissedUpdateVersion !== updates.version && (
+        <div className="update-banner ready" role="status" aria-live="polite">
+          <div className="update-banner-info">
+            <span className="update-banner-badge" aria-hidden="true">Update Ready</span>
+            <span className="update-banner-message">
+              Velum Code <strong>v{updates.version}</strong> is ready to install.
+            </span>
+          </div>
+          <div className="update-banner-actions">
+            <button
+              type="button"
+              className="update-banner-btn primary"
+              onClick={() => void restartToUpdate()}
+            >
+              Restart to update
+            </button>
+            <button
+              type="button"
+              className="update-banner-btn"
+              onClick={() => setDismissedUpdateVersion(updates.version || "dismissed")}
+            >
+              Later
+            </button>
+          </div>
+        </div>
+      )}
+      {updates?.phase === "available" && dismissedUpdateVersion !== updates.version && (
+        <div className="update-banner available" role="status" aria-live="polite">
+          <div className="update-banner-info">
+            <span className="update-banner-badge" aria-hidden="true">New Version</span>
+            <span className="update-banner-message">
+              Velum Code <strong>v{updates.version}</strong> is available.
+            </span>
+          </div>
+          <div className="update-banner-actions">
+            <button
+              type="button"
+              className="update-banner-btn primary"
+              onClick={() => void downloadUpdate()}
+            >
+              Download update
+            </button>
+            <button
+              type="button"
+              className="update-banner-btn"
+              onClick={() => setDismissedUpdateVersion(updates.version || "dismissed")}
+            >
+              Later
+            </button>
+          </div>
+        </div>
+      )}
       <div className="app-body">
       <TabBar tabs={tabs.map((t) => ({ ...t, bot:bots.find(b=>b.id===t.bot_id),model:t.options.model,mode:t.mode,status: tabStatus(t) }))} activeId={activeTab?.id ?? ""} onSelect={selectTab} onClose={closeTab} onNew={newTab} onCommands={togglePalette} onSettings={() => setSettingsOpen(true)} onBots={()=>setBotPanel('manage')} onPlugins={() => setPluginPanel({})} onKanban={()=>{if(activeTab?.workspace)setBoardWorkspace(activeTab.workspace);}} workspace={activeTab?.workspace} />
       <main className="conversation-pane" aria-label="Current conversation">

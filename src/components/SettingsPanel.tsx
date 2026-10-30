@@ -1032,7 +1032,7 @@ export default function SettingsPanel({
                     </Setting>
                     {updates?.supported ? <>
                       <Toggle label="Automatic updates" hint="Check, download and install signed GitHub updates during the opening animation. While the app is open, updates download in the background." value={updates.automatic} change={() => void updateAction(() => setAutomaticUpdates(!updates.automatic))} disabled={busy || updates.phase === "installing"} />
-                      <Setting label={updateMessage(updates)} hint="Updates install automatically at startup. Later checks run every six hours; choose Restart to update for a download ready in this session. Saved conversations and drafts are restored.">
+                      <Setting label={updateMessage(updates)} hint="Updates install automatically at startup and download quietly in the background while running. Choose Restart to update when ready. Saved conversations and drafts are restored.">
                         {() => <div className="settings-update-actions">
                           <button type="button" className="settings-button" disabled={updating || updates.phase === "ready"} onClick={() => void updateAction(checkForUpdates)}>Check for updates</button>
                           {updates.phase === "available" && <button type="button" className="settings-button settings-primary" disabled={updating} onClick={() => void updateAction(downloadUpdate)}>Download update</button>}

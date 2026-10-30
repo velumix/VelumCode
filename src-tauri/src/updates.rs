@@ -233,13 +233,15 @@ pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     if supported {
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
+            // Give startup a moment to settle before checking for updates in background
+            tokio::time::sleep(Duration::from_secs(15)).await;
             loop {
-                tokio::time::sleep(Duration::from_secs(6 * 60 * 60)).await;
                 if app.state::<UpdateState>().status.lock().unwrap().automatic
                     && !app.state::<crate::runner::AgentState>().startup_pending()
                 {
                     let _ = check(&app, Duration::from_secs(30), false).await;
                 }
+                tokio::time::sleep(Duration::from_secs(15 * 60)).await;
             }
         });
     }
