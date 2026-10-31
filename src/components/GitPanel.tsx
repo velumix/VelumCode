@@ -40,7 +40,7 @@ interface GitState {
 }
 
 import GitHubHub from "./GitHubHub";
-import { DiffLines, parseDiff, type DiffRow } from "./diffViewer";
+import { DiffLines, parseDiff, getDiffStats, type DiffRow } from "./diffViewer";
 export { DiffLines, parseDiff, type DiffRow };
 
 function FileButton({
@@ -97,8 +97,11 @@ export default function GitPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [viewMode, setViewMode] = useState<"workstation" | "github">(initialViewMode);
+  const [diffMode, setDiffMode] = useState<"unified" | "split">("unified");
   const panel = useRef<HTMLDivElement>(null);
   const request = useRef(0);
+
+  const diffStats = useMemo(() => getDiffStats(diff), [diff]);
 
   const loadState = useCallback(async () => {
     const id = ++request.current;
@@ -449,6 +452,41 @@ export default function GitPanel({
                             </h3>
                           </div>
                           <div className="git-row git-canvas-actions">
+                            {diff && diffStats.total > 0 && (
+                              <div
+                                className="git-diff-stats-pill"
+                                title={`${diffStats.additions} additions, ${diffStats.deletions} deletions across ${diffStats.hunkCount} hunks`}
+                              >
+                                <span className="git-diff-stat-add">+{diffStats.additions}</span>
+                                <span className="git-diff-stat-del">-{diffStats.deletions}</span>
+                              </div>
+                            )}
+
+                            {diff && (
+                              <div className="git-diff-layout-toggle" role="radiogroup" aria-label="Diff format">
+                                <button
+                                  type="button"
+                                  role="radio"
+                                  aria-checked={diffMode === "unified"}
+                                  className={`git-diff-layout-btn${diffMode === "unified" ? " active" : ""}`}
+                                  onClick={() => setDiffMode("unified")}
+                                  title="Unified view"
+                                >
+                                  Unified
+                                </button>
+                                <button
+                                  type="button"
+                                  role="radio"
+                                  aria-checked={diffMode === "split"}
+                                  className={`git-diff-layout-btn${diffMode === "split" ? " active" : ""}`}
+                                  onClick={() => setDiffMode("split")}
+                                  title="Side-by-side split view"
+                                >
+                                  Split
+                                </button>
+                              </div>
+                            )}
+
                             <div className="git-diff-find-wrap">
                               <label htmlFor="git-diff-find">Find in diff</label>
                               <input
@@ -493,7 +531,7 @@ export default function GitPanel({
                             </p>
                           ) : (
                             <pre aria-label={`Diff of ${selected}`}>
-                              <DiffLines text={diff} query={find} />
+                              <DiffLines text={diff} query={find} mode={diffMode} />
                             </pre>
                           )}
                           {diffTruncated && (

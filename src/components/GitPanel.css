@@ -687,3 +687,110 @@
 .git-remote-pill:hover {
   background: rgba(122, 162, 247, 0.22);
 }
+
+/* Word diff highlighting */
+.git-diff-word-add {
+  background: rgba(127, 201, 127, 0.35);
+  border-radius: 2px;
+  font-weight: 600;
+  box-shadow: 0 0 0 1px rgba(127, 201, 127, 0.25);
+}
+
+.git-diff-word-del {
+  background: rgba(240, 131, 127, 0.35);
+  border-radius: 2px;
+  text-decoration: line-through;
+  opacity: 0.85;
+}
+
+/* Split Diff View */
+.git-diff-split-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.git-diff-split-row {
+  display: flex;
+  width: 100%;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+}
+
+.git-diff-split-col {
+  flex: 1 1 50%;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  padding: 1px 6px;
+  font-family: var(--code-font, monospace);
+  font-size: calc(11px * var(--ui-scale, 1));
+  overflow-x: auto;
+}
+
+.git-diff-split-col.left {
+  border-right: 1px solid var(--border, #36383b);
+}
+
+.git-diff-split-col.git-diff-split-empty {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.git-diff-split-hunk-row {
+  width: 100%;
+  display: block;
+  padding: 3px 8px;
+}
+
+/* Diff Stats Pill in GitPanel */
+.git-diff-stats-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--raised, #202125);
+  border: 1px solid var(--border, #36383b);
+  font-family: var(--code-font, monospace);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.git-diff-stat-add {
+  color: #7fc97f;
+}
+
+.git-diff-stat-del {
+  color: #f0837f;
+}
+
+.git-diff-layout-toggle {
+  display: inline-flex;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border, #36383b);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.git-diff-layout-btn {
+  background: transparent;
+  border: none;
+  color: var(--subtle, #949aa5);
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.git-diff-layout-btn:hover {
+  color: var(--text, #e8eaed);
+}
+
+.git-diff-layout-btn.active {
+  background: var(--accent, #7aa2f7);
+  color: #1a1b26;
+  font-weight: 600;
+}
+

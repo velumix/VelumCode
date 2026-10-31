@@ -12,7 +12,7 @@ import {
   parseStatus,
   type ChangedFile,
 } from "./gitStatus";
-import { DiffLines } from "./diffViewer";
+import { DiffLines, getDiffStats } from "./diffViewer";
 import GitHubHub from "./GitHubHub";
 import { taskBlockers, isOverdue, type Board, type Card, type Column } from "../kanban";
 import "./SessionDashboard.css";
@@ -94,11 +94,37 @@ export default function SessionDashboard({
   const [diffTruncated, setDiffTruncated] = useState(false);
   const [diffSearch, setDiffSearch] = useState("");
   const [copiedDiff, setCopiedDiff] = useState(false);
+  const [diffMode, setDiffMode] = useState<"unified" | "split">("unified");
+  const [activeHunkIndex, setActiveHunkIndex] = useState<number | null>(null);
   const [expandedToolIds, setExpandedToolIds] = useState<Set<number>>(new Set());
   const [copiedToolId, setCopiedToolId] = useState<number | null>(null);
   const [toolSearch, setToolSearch] = useState("");
   const [toolCategoryFilter, setToolCategoryFilter] = useState<"all" | "shell" | "file" | "search" | "git" | "error">("all");
   const [copiedTelemetry, setCopiedTelemetry] = useState(false);
+
+  const diffStats = useMemo(() => getDiffStats(fileDiff), [fileDiff]);
+
+  const scrollToHunk = useCallback((targetIndex: number) => {
+    const el = document.getElementById(`diff-hunk-${targetIndex}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setActiveHunkIndex(targetIndex);
+    }
+  }, []);
+
+  const goToPrevHunk = useCallback(() => {
+    if (diffStats.hunkCount === 0) return;
+    const current = activeHunkIndex ?? 0;
+    const next = current <= 0 ? diffStats.hunkCount - 1 : current - 1;
+    scrollToHunk(next);
+  }, [activeHunkIndex, diffStats.hunkCount, scrollToHunk]);
+
+  const goToNextHunk = useCallback(() => {
+    if (diffStats.hunkCount === 0) return;
+    const current = activeHunkIndex ?? -1;
+    const next = current >= diffStats.hunkCount - 1 ? 0 : current + 1;
+    scrollToHunk(next);
+  }, [activeHunkIndex, diffStats.hunkCount, scrollToHunk]);
 
   // Telemetry computations
   const contextUsed = usage.context?.used_tokens ?? usage.turn?.input_tokens ?? 0;
@@ -614,15 +640,78 @@ export default function SessionDashboard({
                   {selectedDiffFile ? (
                     <>
                       <div className="sd-diff-viewer-head">
-                        <span className="sd-diff-viewer-path">{selectedDiffFile}</span>
-                        <div className="sd-diff-search">
-                          <Icon name="search" size={12} />
-                          <input
-                            type="search"
-                            placeholder="Filter diff lines…"
-                            value={diffSearch}
-                            onChange={(e) => setDiffSearch(e.target.value)}
-                          />
+                        <div className="sd-diff-viewer-title-group">
+                          <span className="sd-diff-viewer-path">{selectedDiffFile}</span>
+                          {diffStats.total > 0 && (
+                            <div
+                              className="sd-diff-stats-pill"
+                              title={`${diffStats.additions} additions, ${diffStats.deletions} deletions across ${diffStats.hunkCount} hunks`}
+                            >
+                              <span className="sd-stat-add">+{diffStats.additions}</span>
+                              <span className="sd-stat-del">-{diffStats.deletions}</span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="sd-diff-head-actions">
+                          {diffStats.hunkCount > 0 && (
+                            <div className="sd-hunk-nav">
+                              <button
+                                type="button"
+                                className="sd-diff-btn-icon"
+                                title="Previous change hunk"
+                                aria-label="Previous change hunk"
+                                onClick={goToPrevHunk}
+                              >
+                                <Icon name="arrow" size={11} style={{ transform: "rotate(180deg)" }} />
+                              </button>
+                              <span className="sd-hunk-count" aria-live="polite">
+                                {activeHunkIndex != null ? `${activeHunkIndex + 1}/${diffStats.hunkCount}` : `${diffStats.hunkCount}h`}
+                              </span>
+                              <button
+                                type="button"
+                                className="sd-diff-btn-icon"
+                                title="Next change hunk"
+                                aria-label="Next change hunk"
+                                onClick={goToNextHunk}
+                              >
+                                <Icon name="arrow" size={11} />
+                              </button>
+                            </div>
+                          )}
+
+                          <div className="sd-diff-mode-toggle" role="radiogroup" aria-label="Diff display format">
+                            <button
+                              type="button"
+                              role="radio"
+                              aria-checked={diffMode === "unified"}
+                              className={`sd-mode-btn${diffMode === "unified" ? " active" : ""}`}
+                              onClick={() => setDiffMode("unified")}
+                              title="Unified single-column diff"
+                            >
+                              Unified
+                            </button>
+                            <button
+                              type="button"
+                              role="radio"
+                              aria-checked={diffMode === "split"}
+                              className={`sd-mode-btn${diffMode === "split" ? " active" : ""}`}
+                              onClick={() => setDiffMode("split")}
+                              title="Side-by-side split diff"
+                            >
+                              Split
+                            </button>
+                          </div>
+
+                          <div className="sd-diff-search">
+                            <Icon name="search" size={12} />
+                            <input
+                              type="search"
+                              placeholder="Filter diff lines…"
+                              value={diffSearch}
+                              onChange={(e) => setDiffSearch(e.target.value)}
+                            />
+                          </div>
                         </div>
                       </div>
                       <div className="sd-diff-body">
@@ -637,7 +726,7 @@ export default function SessionDashboard({
                                 Diff exceeds 24 KB and was truncated for preview.
                               </div>
                             )}
-                            <DiffLines text={fileDiff} query={diffSearch} />
+                            <DiffLines text={fileDiff} query={diffSearch} mode={diffMode} />
                           </>
                         ) : (
                           <div style={{ color: "var(--muted)", padding: "12px" }}>

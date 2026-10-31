@@ -311,6 +311,108 @@
   white-space: nowrap;
 }
 
+.sd-diff-viewer-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.sd-diff-stats-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--panel, #18191e);
+  border: 1px solid var(--border, #36383b);
+  font-family: var(--code-font, monospace);
+  font-size: calc(9.5px * var(--ui-scale, 1));
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.sd-stat-add {
+  color: #7fc97f;
+}
+
+.sd-stat-del {
+  color: #f0837f;
+}
+
+.sd-diff-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.sd-hunk-nav {
+  display: inline-flex;
+  align-items: center;
+  background: var(--panel, #18191e);
+  border: 1px solid var(--border, #36383b);
+  border-radius: 6px;
+  padding: 1px;
+}
+
+.sd-diff-btn-icon {
+  background: transparent;
+  border: none;
+  color: var(--muted, #adb1b9);
+  padding: 3px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 120ms ease;
+}
+
+.sd-diff-btn-icon:hover {
+  background: var(--hover, #2c2e34);
+  color: var(--text, #e8eaed);
+}
+
+.sd-hunk-count {
+  font-size: calc(9.5px * var(--ui-scale, 1));
+  font-family: var(--code-font, monospace);
+  color: var(--muted, #adb1b9);
+  padding: 0 4px;
+}
+
+.sd-diff-mode-toggle {
+  display: inline-flex;
+  background: var(--panel, #18191e);
+  border: 1px solid var(--border, #36383b);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.sd-mode-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted, #adb1b9);
+  font-size: calc(9.5px * var(--ui-scale, 1));
+  font-weight: 550;
+  padding: 2px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.sd-mode-btn:hover {
+  color: var(--text, #e8eaed);
+}
+
+.sd-mode-btn.active {
+  background: var(--accent-dim, #25364d);
+  color: var(--accent, #84baff);
+  font-weight: 600;
+}
+
 .sd-diff-search {
   display: flex;
   align-items: center;

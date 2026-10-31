@@ -43,3 +43,29 @@ test("Git panel explains status and renders proper diffs with true line numbers"
   await expect(page.getByLabel("Diff of src/components/GitPanel.tsx")).toContainText("+line one");
   await expect(page.getByLabel("Diff of src/components/GitPanel.tsx").locator(".git-diff-add .git-diff-new").first()).toHaveText("1");
 });
+
+test("Git diff viewer supports side-by-side split mode, diff stats, and passes accessibility", async ({ page }) => {
+  await boot(page);
+  await page.getByRole("button", { name: "Git branches and diff", exact: true }).click();
+  await page.getByRole("button", { name: /src\/App\.tsx/ }).click();
+
+  // Verify stats badge
+  await expect(page.locator(".git-diff-stats-pill")).toBeVisible();
+  await expect(page.locator(".git-diff-stat-add")).toContainText("+");
+  await expect(page.locator(".git-diff-stat-del")).toContainText("-");
+
+  // Toggle to Split view
+  await expect(page.getByRole("radio", { name: "Split" })).toBeVisible();
+  await page.getByRole("radio", { name: "Split" }).click();
+  await expect(page.getByRole("radio", { name: "Split" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator(".git-diff-split-container")).toBeVisible();
+  await expect(page.locator(".git-diff-split-col.left")).toBeVisible();
+  await expect(page.locator(".git-diff-split-col.right")).toBeVisible();
+
+  // Accessibility check on Split view
+  expect((await new AxeBuilder({ page }).include(".git-panel").analyze()).violations).toEqual([]);
+
+  // Toggle back to Unified view
+  await page.getByRole("radio", { name: "Unified" }).click();
+  await expect(page.locator(".git-diff-split-container")).toHaveCount(0);
+});
