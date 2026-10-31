@@ -1,0 +1,325 @@
+/* VelumMark — Animated Reactive Glass Prism */
+
+.velum-mark {
+  display: inline-block;
+  vertical-align: middle;
+  flex-shrink: 0;
+  overflow: visible;
+  transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1), filter 240ms ease;
+}
+
+/* Base Stop Colors */
+.velum-left-stop-0 { stop-color: #64a6ff; }
+.velum-left-stop-60 { stop-color: #3b82f6; }
+.velum-left-stop-100 { stop-color: #2563eb; }
+
+.velum-fold-stop-0 { stop-color: #1d4ed8; }
+.velum-fold-stop-100 { stop-color: #1e3a8a; }
+
+.velum-right-stop-0 { stop-color: #2563eb; }
+.velum-right-stop-45 { stop-color: #60a5fa; }
+.velum-right-stop-100 { stop-color: #bfdbfe; }
+
+.velum-aura-stop-0 { stop-color: #84baff; stop-opacity: 0.35; }
+.velum-aura-stop-50 { stop-color: #60a5fa; stop-opacity: 0.15; }
+.velum-aura-stop-100 { stop-color: #3b82f6; stop-opacity: 0; }
+
+.velum-aura-disk {
+  opacity: 0.45;
+  transform-origin: 128px 128px;
+  transition: opacity 300ms ease, transform 300ms ease;
+}
+
+.velum-orbit-group {
+  opacity: 0;
+  pointer-events: none;
+  transform-origin: 128px 128px;
+  transition: opacity 280ms ease;
+}
+
+.velum-orbit-track {
+  stroke: rgba(132, 186, 255, 0.25);
+  stroke-dasharray: 6 6;
+}
+
+.velum-orbit-satellite {
+  fill: #84baff;
+  filter: drop-shadow(0 0 4px #84baff);
+}
+
+.velum-orbit-satellite-trailing {
+  fill: #60a5fa;
+  opacity: 0.6;
+}
+
+.velum-harmonic-wave {
+  stroke: #6edcb4;
+  opacity: 0;
+  transform-origin: 128px 128px;
+  pointer-events: none;
+}
+
+.velum-sparks-group {
+  opacity: 0;
+  pointer-events: none;
+  transform-origin: 128px 128px;
+  transition: opacity 280ms ease;
+}
+
+.velum-spark {
+  fill: #a78bfa;
+  filter: drop-shadow(0 0 3px #c084fc);
+}
+
+.velum-specular-edge {
+  opacity: 0.75;
+  transition: opacity 240ms ease, stroke-width 240ms ease;
+}
+
+.velum-prism-body {
+  transform-origin: 128px 128px;
+  transition: transform 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* =========================================
+   STATUS: IDLE (Gentle Breathing Luminance)
+   ========================================= */
+.velum-mark.status-idle .velum-aura-disk {
+  animation: velum-breathe 4s infinite ease-in-out;
+}
+
+.velum-mark.status-idle .velum-specular-edge {
+  animation: velum-shimmer 4.8s infinite ease-in-out;
+}
+
+/* =========================================
+   STATUS: STARTING (Spin-Up Convergence)
+   ========================================= */
+.velum-mark.status-starting .velum-aura-disk {
+  opacity: 0.7;
+  animation: velum-pulse-fast 1s infinite ease-in-out;
+}
+
+.velum-mark.status-starting .velum-orbit-group {
+  opacity: 0.85;
+  animation: velum-spin 2.2s infinite linear;
+}
+
+.velum-mark.status-starting .velum-prism-body {
+  animation: velum-subtle-rock 1.6s infinite ease-in-out;
+}
+
+/* =========================================
+   STATUS: THINKING (Cognitive Neural Waves)
+   ========================================= */
+.velum-mark.status-thinking {
+  filter: drop-shadow(0 0 8px rgba(168, 85, 247, 0.35));
+}
+
+.velum-mark.status-thinking .velum-aura-stop-0 { stop-color: #a855f7; stop-opacity: 0.45; }
+.velum-mark.status-thinking .velum-aura-stop-50 { stop-color: #38bdf8; stop-opacity: 0.25; }
+
+.velum-mark.status-thinking .velum-aura-disk {
+  opacity: 0.8;
+  animation: velum-thinking-aura 2.2s infinite ease-in-out;
+}
+
+.velum-mark.status-thinking .velum-sparks-group {
+  opacity: 1;
+}
+
+.velum-mark.status-thinking .spark-1 {
+  animation: velum-spark-orbit-1 1.8s infinite ease-in-out;
+}
+
+.velum-mark.status-thinking .spark-2 {
+  animation: velum-spark-orbit-2 2.4s infinite ease-in-out;
+}
+
+.velum-mark.status-thinking .spark-3 {
+  animation: velum-spark-orbit-3 1.5s infinite ease-in-out;
+}
+
+.velum-mark.status-thinking .velum-specular-edge {
+  opacity: 1;
+  stroke-width: 4.5px;
+  animation: velum-synapse 1.2s infinite ease-in-out;
+}
+
+/* =========================================
+   STATUS: WORKING (High-Energy Corona & Ring)
+   ========================================= */
+.velum-mark.status-working {
+  filter: drop-shadow(0 0 10px rgba(96, 165, 250, 0.55));
+}
+
+.velum-mark.status-working .velum-aura-disk {
+  opacity: 0.9;
+  animation: velum-working-aura 1s infinite ease-in-out;
+}
+
+.velum-mark.status-working .velum-orbit-group {
+  opacity: 1;
+  animation: velum-spin 1.2s infinite linear;
+}
+
+.velum-mark.status-working .velum-specular-edge {
+  opacity: 1;
+  stroke-width: 5px;
+  animation: velum-working-edge 0.7s infinite alternate ease-in-out;
+}
+
+.velum-mark.status-working .velum-prism-body {
+  animation: velum-working-body 1.8s infinite ease-in-out;
+}
+
+/* =========================================
+   STATUS: DONE (Harmonic Stabilization Bloom)
+   ========================================= */
+.velum-mark.status-done {
+  filter: drop-shadow(0 0 10px rgba(110, 220, 180, 0.6));
+}
+
+.velum-mark.status-done .velum-aura-stop-0 { stop-color: #6edcb4; stop-opacity: 0.5; }
+.velum-mark.status-done .velum-aura-stop-50 { stop-color: #38bdf8; stop-opacity: 0.25; }
+
+.velum-mark.status-done .velum-harmonic-wave {
+  animation: velum-harmonic-bloom 1.6s cubic-bezier(0.1, 0.9, 0.2, 1) forwards;
+}
+
+.velum-mark.status-done .velum-aura-disk {
+  animation: velum-settle 1.8s ease-out forwards;
+}
+
+/* =========================================
+   STATUS: ERROR (Crimson Alert & Jitter)
+   ========================================= */
+.velum-mark.status-error {
+  filter: drop-shadow(0 0 10px rgba(255, 90, 85, 0.65));
+}
+
+.velum-mark.status-error .velum-left-stop-0 { stop-color: #ff6b5e; }
+.velum-mark.status-error .velum-left-stop-60 { stop-color: #ef4444; }
+.velum-mark.status-error .velum-left-stop-100 { stop-color: #dc2626; }
+
+.velum-mark.status-error .velum-fold-stop-0 { stop-color: #b91c1c; }
+.velum-mark.status-error .velum-fold-stop-100 { stop-color: #7f1d1d; }
+
+.velum-mark.status-error .velum-right-stop-0 { stop-color: #ef4444; }
+.velum-mark.status-error .velum-right-stop-45 { stop-color: #f87171; }
+.velum-mark.status-error .velum-right-stop-100 { stop-color: #fca5a5; }
+
+.velum-mark.status-error .velum-aura-stop-0 { stop-color: #ff6b5e; stop-opacity: 0.55; }
+.velum-mark.status-error .velum-aura-stop-50 { stop-color: #b91c1c; stop-opacity: 0.25; }
+
+.velum-mark.status-error .velum-prism-body {
+  animation: velum-error-jitter 0.6s infinite ease-in-out;
+}
+
+/* =========================================
+   STATUS: DISABLED
+   ========================================= */
+.velum-mark.status-disabled {
+  filter: grayscale(1) opacity(0.5);
+}
+
+/* =========================================
+   KEYFRAMES
+   ========================================= */
+@keyframes velum-breathe {
+  0%, 100% { transform: scale(0.92); opacity: 0.35; }
+  50% { transform: scale(1.05); opacity: 0.55; }
+}
+
+@keyframes velum-shimmer {
+  0%, 75%, 100% { opacity: 0.6; stroke-dasharray: 200; stroke-dashoffset: 0; }
+  85% { opacity: 1; stroke-width: 4.5px; }
+}
+
+@keyframes velum-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes velum-pulse-fast {
+  0%, 100% { transform: scale(0.94); opacity: 0.5; }
+  50% { transform: scale(1.1); opacity: 0.85; }
+}
+
+@keyframes velum-subtle-rock {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-2deg); }
+  75% { transform: rotate(2deg); }
+}
+
+@keyframes velum-thinking-aura {
+  0%, 100% { transform: scale(0.92) rotate(0deg); opacity: 0.55; }
+  50% { transform: scale(1.12) rotate(180deg); opacity: 0.85; }
+}
+
+@keyframes velum-spark-orbit-1 {
+  0%, 100% { transform: translate(0, 0); opacity: 0.4; }
+  50% { transform: translate(-15px, -20px) scale(1.4); opacity: 1; }
+}
+
+@keyframes velum-spark-orbit-2 {
+  0%, 100% { transform: translate(0, 0); opacity: 0.3; }
+  50% { transform: translate(12px, -18px) scale(1.3); opacity: 0.9; }
+}
+
+@keyframes velum-spark-orbit-3 {
+  0%, 100% { transform: translate(0, 0); opacity: 0.5; }
+  50% { transform: translate(6px, 14px) scale(1.2); opacity: 0.95; }
+}
+
+@keyframes velum-synapse {
+  0%, 100% { opacity: 0.6; stroke-width: 3.5px; }
+  50% { opacity: 1; stroke-width: 5.5px; filter: drop-shadow(0 0 6px #c084fc); }
+}
+
+@keyframes velum-working-aura {
+  0%, 100% { transform: scale(0.96); opacity: 0.7; }
+  50% { transform: scale(1.18); opacity: 1; }
+}
+
+@keyframes velum-working-edge {
+  0% { opacity: 0.8; stroke-width: 3.5px; }
+  100% { opacity: 1; stroke-width: 6px; filter: drop-shadow(0 0 8px #93c5fd); }
+}
+
+@keyframes velum-working-body {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.035); }
+}
+
+@keyframes velum-harmonic-bloom {
+  0% { transform: scale(0.4); opacity: 0.9; stroke-width: 6px; }
+  100% { transform: scale(1.6); opacity: 0; stroke-width: 0.5px; }
+}
+
+@keyframes velum-settle {
+  0% { transform: scale(1.2); opacity: 0.85; }
+  100% { transform: scale(1); opacity: 0.4; }
+}
+
+@keyframes velum-error-jitter {
+  0%, 100% { transform: translate(0, 0); }
+  20% { transform: translate(-2px, 1.5px); }
+  40% { transform: translate(2px, -1px); }
+  60% { transform: translate(-1.5px, -1.5px); }
+  80% { transform: translate(1.5px, 2px); }
+}
+
+/* Reduced Motion: Maintain rich static aesthetics without motion loop */
+@media (prefers-reduced-motion: reduce) {
+  .velum-mark,
+  .velum-aura-disk,
+  .velum-orbit-group,
+  .velum-prism-body,
+  .velum-specular-edge,
+  .velum-harmonic-wave,
+  .velum-spark {
+    animation: none !important;
+    transition: none !important;
+  }
+}

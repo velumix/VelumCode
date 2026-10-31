@@ -296,6 +296,7 @@ mod tests {
                     name: "Grokbot".into(),
                     avatar: String::new(),
                     color: "#79a9ff".into(),
+                    role: None,
                 },
             },
         );

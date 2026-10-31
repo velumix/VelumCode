@@ -9,13 +9,13 @@ export default function BotAvatar({
   size = 32,
   status = "idle",
 }: {
-  bot: Pick<BotIdentity, "name" | "avatar" | "color">;
+  bot: Pick<BotIdentity, "name" | "avatar" | "color" | "role">;
   size?: number;
   status?: OrbStatus;
 }) {
   return (
     <span
-      className={`bot-avatar${bot.avatar ? " has-picture" : " has-orb"}`}
+      className={`bot-avatar${bot.avatar ? " has-picture" : " has-orb"} status-${status}`}
       style={{
         width: size,
         height: size,
@@ -27,7 +27,10 @@ export default function BotAvatar({
       title={bot.name}
     >
       {bot.avatar ? (
-        <img src={bot.avatar} alt="" />
+        <>
+          <img src={bot.avatar} alt="" />
+          <span className={`bot-avatar-halo status-${status}`} style={{ borderColor: bot.color }} />
+        </>
       ) : (
         <BotEnergyOrb
           color={bot.color}

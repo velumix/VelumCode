@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import Icon, { VelumMark } from "./Icon";
+import type { OrbStatus } from "./BotAvatar";
 import type { UpdateStatus } from "../updates";
 
 function MinimizeIcon() {
@@ -41,10 +42,12 @@ export default function TitleBar({
   onCommands,
   updates,
   onOpenUpdates,
+  status = "idle",
 }: {
   onCommands: () => void;
   updates?: UpdateStatus | null;
   onOpenUpdates?: () => void;
+  status?: OrbStatus;
 }) {
   const [maximized, setMaximized] = useState(false);
   const win = getCurrentWindow();
@@ -85,7 +88,7 @@ export default function TitleBar({
       }}
     >
       <div className="titlebar-brand">
-        <VelumMark size={18} />
+        <VelumMark size={18} status={status} />
         <span>Velum Code</span>
         {currentVersion && (
           <button

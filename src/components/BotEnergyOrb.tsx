@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-export type OrbStatus = "idle" | "working" | "error" | "disabled";
+export type OrbStatus = "idle" | "starting" | "thinking" | "working" | "done" | "error" | "disabled";
 
 function hashSeed(value: string): number {
   let hash = 2166136261;
@@ -109,14 +109,22 @@ export default function BotEnergyOrb({
         cachedBase = hexToRgb(currentColor);
         cachedTint =
           currentMode === "error"
-            ? mix(cachedBase, [255, 107, 94], 0.55)
-            : currentMode === "disabled"
-              ? [128, 134, 148]
-              : cachedBase;
+            ? mix(cachedBase, [255, 90, 85], 0.7)
+            : currentMode === "done"
+              ? mix(cachedBase, [80, 240, 180], 0.65)
+              : currentMode === "thinking"
+                ? mix(cachedBase, [168, 85, 247], 0.45)
+                : currentMode === "working"
+                  ? mix(cachedBase, [120, 200, 255], 0.35)
+                  : currentMode === "starting"
+                    ? mix(cachedBase, [100, 130, 255], 0.45)
+                    : currentMode === "disabled"
+                      ? [128, 134, 148]
+                      : cachedBase;
         cachedLight = mix(
           cachedTint,
           [255, 255, 255],
-          currentMode === "disabled" ? 0.25 : 0.55,
+          currentMode === "disabled" ? 0.25 : currentMode === "working" ? 0.7 : 0.55,
         );
         cachedDark = mix(cachedTint, [8, 12, 24], 0.72);
 
@@ -144,9 +152,14 @@ export default function BotEnergyOrb({
 
       const w = canvas.width;
       const h = canvas.height;
-      const cx = w / 2;
-      const cy = h / 2;
       const r = Math.min(w, h) / 2;
+
+      // Jitter offset during error
+      const jx = mode === "error" ? (Math.random() - 0.5) * r * 0.08 : 0;
+      const jy = mode === "error" ? (Math.random() - 0.5) * r * 0.08 : 0;
+      const cx = w / 2 + jx;
+      const cy = h / 2 + jy;
+
       ctx.clearRect(0, 0, w, h);
 
       ctx.save();
@@ -160,19 +173,25 @@ export default function BotEnergyOrb({
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.fill();
 
-      // Orbiting plasma blobs.
+      // Collect node positions for synaptic filaments (in thinking mode)
+      const nodePositions: { x: number; y: number }[] = [];
+
+      // Orbiting plasma blobs
       for (const b of blobs) {
-        const angle = b.phase + phaseAcc * b.speed * 0.6;
+        const speedMultiplier = mode === "working" ? 2.2 : mode === "thinking" ? 1.4 : 1;
+        const angle = b.phase + phaseAcc * b.speed * 0.6 * speedMultiplier;
         const wob =
           1 +
           0.18 *
             Math.sin(phaseAcc * b.wobble + b.phase) *
-            (mode === "working" ? 1.6 : 1);
+            (mode === "working" ? 1.8 : 1);
         const px = cx + Math.cos(angle) * r * b.orbit * 2.4 * wob;
         const py = cy + Math.sin(angle) * r * b.orbit * 2.4 * wob;
-        const br = r * b.radius * 2.2 * (mode === "working" ? wob : 1);
+        nodePositions.push({ x: px, y: py });
+
+        const br = r * b.radius * 2.2 * (mode === "working" ? wob * 1.15 : 1);
         const g = ctx.createRadialGradient(px, py, 0, px, py, Math.max(br, 1));
-        g.addColorStop(0, css(light, mode === "disabled" ? 0.5 : 0.85));
+        g.addColorStop(0, css(light, mode === "disabled" ? 0.5 : 0.88));
         g.addColorStop(0.5, css(tint, mode === "disabled" ? 0.35 : 0.55));
         g.addColorStop(1, css(tint, 0));
         ctx.fillStyle = g;
@@ -181,10 +200,62 @@ export default function BotEnergyOrb({
         ctx.fill();
       }
 
-      // Rim light, breathing slowly (faster while working).
-      const pulse = 0.55 + 0.3 * Math.sin(pulseAcc);
+      // Thinking: draw synaptic filaments between close nodes
+      if (mode === "thinking") {
+        for (let i = 0; i < nodePositions.length; i++) {
+          for (let j = i + 1; j < nodePositions.length; j++) {
+            const dx = nodePositions[i].x - nodePositions[j].x;
+            const dy = nodePositions[i].y - nodePositions[j].y;
+            const dist = Math.hypot(dx, dy);
+            if (dist < r * 1.05) {
+              const alpha = (1 - dist / (r * 1.05)) * (0.35 + 0.35 * Math.sin(phaseAcc * 3 + i));
+              ctx.strokeStyle = css(light, alpha);
+              ctx.lineWidth = Math.max(1, w * 0.02);
+              ctx.beginPath();
+              ctx.moveTo(nodePositions[i].x, nodePositions[i].y);
+              ctx.lineTo(nodePositions[j].x, nodePositions[j].y);
+              ctx.stroke();
+            }
+          }
+        }
+      }
+
+      // Working: energetic coronal solar rays around the rim
+      if (mode === "working") {
+        const flareCount = 10;
+        ctx.lineWidth = Math.max(1, w * 0.025);
+        for (let i = 0; i < flareCount; i++) {
+          const fa = (i / flareCount) * Math.PI * 2 + phaseAcc * 1.8;
+          const flen = r * (0.85 + 0.13 * Math.sin(phaseAcc * 4.5 + i * 2));
+          const fx1 = cx + Math.cos(fa) * (r * 0.72);
+          const fy1 = cy + Math.sin(fa) * (r * 0.72);
+          const fx2 = cx + Math.cos(fa) * flen;
+          const fy2 = cy + Math.sin(fa) * flen;
+          ctx.strokeStyle = css(light, 0.5 + 0.4 * Math.sin(phaseAcc * 3 + i));
+          ctx.beginPath();
+          ctx.moveTo(fx1, fy1);
+          ctx.lineTo(fx2, fy2);
+          ctx.stroke();
+        }
+      }
+
+      // Done: harmonic outward wave bloom
+      if (mode === "done") {
+        const waveProgress = (pulseAcc % 2.5) / 2.5;
+        const waveR = r * (0.3 + 0.65 * waveProgress);
+        const waveAlpha = (1 - waveProgress) * 0.7;
+        ctx.strokeStyle = css(light, waveAlpha);
+        ctx.lineWidth = Math.max(1.5, w * 0.04 * (1 - waveProgress));
+        ctx.beginPath();
+        ctx.arc(cx, cy, waveR, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // Rim light, breathing slowly (faster and brighter while working/thinking)
+      const pulseSpeed = mode === "working" ? 2.5 : mode === "thinking" ? 1.6 : 1;
+      const pulse = 0.55 + 0.35 * Math.sin(pulseAcc * pulseSpeed);
       ctx.strokeStyle = css(light, mode === "disabled" ? 0.35 : pulse);
-      ctx.lineWidth = Math.max(1, w * 0.03);
+      ctx.lineWidth = Math.max(1, w * 0.035);
       ctx.beginPath();
       ctx.arc(cx, cy, r * 0.93, 0, Math.PI * 2);
       ctx.stroke();
@@ -217,11 +288,14 @@ export default function BotEnergyOrb({
       }
 
       const isWorking = mode === "working";
-      const speed = isWorking ? 2.4 : 0.9;
-      phaseAcc += dt * speed;
-      pulseAcc += dt * (isWorking ? 3.4 : 1.1);
+      const isThinking = mode === "thinking";
+      const speed = isWorking ? 2.6 : isThinking ? 1.6 : mode === "starting" ? 2.0 : 0.85;
+      const pulseSpeed = isWorking ? 3.6 : isThinking ? 2.2 : mode === "error" ? 3.8 : 1.1;
 
-      const frameInterval = isWorking ? 16 : 50; // ~20fps for idle saves battery
+      phaseAcc += dt * speed;
+      pulseAcc += dt * pulseSpeed;
+
+      const frameInterval = isWorking ? 16 : isThinking ? 20 : 45;
       if (now - lastDrawTime >= frameInterval) {
         lastDrawTime = now;
         draw(phaseAcc, pulseAcc);

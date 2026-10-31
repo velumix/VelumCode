@@ -1,4 +1,4 @@
-import { Fragment, lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -21,7 +21,8 @@ import { getPreferences, usePreferences } from "./preferences";
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 import ProviderPicker from "./components/ProviderPicker";
 import ChoiceMenu from './components/ChoiceMenu';
-import type {BotProfile,BotView} from './bots';
+import { botPresets, type BotProfile, type BotView } from './bots';
+import type { OrbStatus } from "./components/BotAvatar";
 import type {ModelCatalog} from './providers';
 const BotsPanel=lazy(()=>import('./components/BotsPanel'));
 const MemoryPanel = lazy(() => import("./components/MemoryPanel"));
@@ -350,12 +351,47 @@ export default function App() {
   const newTab = useCallback(() => {
     openProvider(newProvider());
   }, [openProvider]);
-  const openBot=(bot:BotProfile)=>{
-    if(stateRef.current.tabs.length>=32){setDesktopMessage({text:'Close a conversation before opening another bot.',error:false});return;}
-    const active=stateRef.current.tabs.find(t=>t.id===stateRef.current.activeId);
-    const tab=createTab(++counter.current,bot.provider);tab.bot_id=bot.id;tab.options={...bot.options};tab.workspace=active?.workspace;tab.title=bot.name;
-    if(botPanel==='handoff'&&active){const messages=pluginHandles.current.get(active.id)?.messages().slice(-4)||[];const excerpt=messages.map(m=>`${m.role}: ${m.text}`).join('\n\n').slice(-8000);saveDraft(tab.id,`Handoff from ${bots.find(b=>b.id===active.bot_id)?.name||providerNames[active.provider]} to ${bot.name}.\n\nRelevant conversation context (reference only):\n${excerpt}\n\nReview the current workspace and Kanban, then continue with the next appropriate step.`);}
-    setTabs(tabs=>[...tabs,tab]);setActiveId(tab.id);setBotPanel(null);
+  const handoffToBot = useCallback((targetBot: BotProfile | { id?: string; name: string; provider?: Provider; options?: RunOptions }) => {
+    if (stateRef.current.tabs.length >= 32) {
+      setDesktopMessage({ text: 'Close a conversation before opening another bot.', error: false });
+      return;
+    }
+    const active = stateRef.current.tabs.find(t => t.id === stateRef.current.activeId);
+    const prov = (targetBot.provider || active?.provider || 'muse') as Provider;
+    const tab = createTab(++counter.current, prov);
+    tab.bot_id = targetBot.id;
+    tab.options = { ...(targetBot.options || active?.options || { model: '', reasoning: '' }) };
+    tab.workspace = active?.workspace;
+    tab.title = targetBot.name;
+    if (active) {
+      const messages = pluginHandles.current.get(active.id)?.messages().slice(-4) || [];
+      const excerpt = messages.map(m => `${m.role}: ${m.text}`).join('\n\n').slice(-8000);
+      const activeName = bots.find(b => b.id === active.bot_id)?.name || providerNames[active.provider];
+      saveDraft(tab.id, `Handoff from ${activeName} to ${targetBot.name}.\n\nRelevant conversation context (reference only):\n${excerpt}\n\nReview the current workspace and Kanban, then continue with the next appropriate step.`);
+    }
+    setTabs(tabs => [...tabs, tab]);
+    setActiveId(tab.id);
+    setBotPanel(null);
+  }, [bots]);
+
+  const openBot = (bot: BotProfile) => {
+    if (botPanel === 'handoff') {
+      handoffToBot(bot);
+      return;
+    }
+    if (stateRef.current.tabs.length >= 32) {
+      setDesktopMessage({ text: 'Close a conversation before opening another bot.', error: false });
+      return;
+    }
+    const active = stateRef.current.tabs.find(t => t.id === stateRef.current.activeId);
+    const tab = createTab(++counter.current, bot.provider);
+    tab.bot_id = bot.id;
+    tab.options = { ...bot.options };
+    tab.workspace = active?.workspace;
+    tab.title = bot.name;
+    setTabs(tabs => [...tabs, tab]);
+    setActiveId(tab.id);
+    setBotPanel(null);
   };
   const workOnCard = (card: Card) => {
     if (stateRef.current.tabs.length >= 32) throw new Error("Close a conversation before opening this task.");
@@ -614,9 +650,64 @@ export default function App() {
     })),
   ];
 
+  const activeOrbStatus: OrbStatus = useMemo(() => {
+    if (!activeTab || activeTab.mode !== "agent") return "idle";
+    const k = tabStatus(activeTab).kind;
+    if (k === "starting") return "starting";
+    if (k === "running") return "working";
+    if (k === "error" || k === "exited") return "error";
+    if (k === "done") return "done";
+    return "idle";
+  }, [activeTab]);
+
+  useEffect(() => {
+    const onHandoff = (e: Event) => {
+      const detail = (e as CustomEvent<{ botId?: string; botName?: string }>).detail;
+      if (!detail?.botId && !detail?.botName) {
+        setBotPanel('handoff');
+        return;
+      }
+      const found = bots.find(b => (detail.botId && b.id === detail.botId) || (detail.botName && b.name.toLowerCase() === detail.botName.toLowerCase()));
+      if (found) {
+        handoffToBot(found);
+      } else {
+        const preset = botPresets.find(p => (detail.botId && p.name.toLowerCase() === detail.botId.toLowerCase()) || (detail.botName && p.name.toLowerCase() === detail.botName.toLowerCase()));
+        if (preset) {
+          handoffToBot({ name: preset.name, provider: 'muse', options: { model: '', reasoning: '' } });
+        } else {
+          setBotPanel('handoff');
+        }
+      }
+    };
+    const onOpenMemory = (e: Event) => {
+      const detail = (e as CustomEvent<{ botId?: string; workspace?: string }>).detail;
+      const active = stateRef.current.tabs.find(t => t.id === stateRef.current.activeId);
+      const ws = detail?.workspace || active?.workspace;
+      if (ws) setMemory({ workspace: ws, bot_id: detail?.botId || active?.bot_id });
+    };
+    const onOpenKanban = (e: Event) => {
+      const detail = (e as CustomEvent<{ workspace?: string }>).detail;
+      const active = stateRef.current.tabs.find(t => t.id === stateRef.current.activeId);
+      const ws = detail?.workspace || active?.workspace;
+      if (ws) setBoardWorkspace(ws);
+    };
+    const onOpenManage = () => setBotPanel('manage');
+
+    window.addEventListener('velum:handoff-bot', onHandoff);
+    window.addEventListener('velum:open-bot-memory', onOpenMemory);
+    window.addEventListener('velum:open-kanban', onOpenKanban);
+    window.addEventListener('velum:open-bot-manage', onOpenManage);
+    return () => {
+      window.removeEventListener('velum:handoff-bot', onHandoff);
+      window.removeEventListener('velum:open-bot-memory', onOpenMemory);
+      window.removeEventListener('velum:open-kanban', onOpenKanban);
+      window.removeEventListener('velum:open-bot-manage', onOpenManage);
+    };
+  }, [bots, handoffToBot]);
+
   return (
     <div className="app">
-      <TitleBar onCommands={togglePalette} updates={updates} onOpenUpdates={() => { setSettingsPage("updates"); setSettingsOpen(true); }} />
+      <TitleBar onCommands={togglePalette} updates={updates} onOpenUpdates={() => { setSettingsPage("updates"); setSettingsOpen(true); }} status={activeOrbStatus} />
       {(desktopMessage || desktop.last_error) && <div className={`desktop-notice${desktopMessage?.error || desktop.last_error ? " error" : ""}`} role={desktopMessage?.error || desktop.last_error ? "alert" : "status"}>
         <span>{desktopMessage?.text || desktop.last_error}</span>
         <button type="button" aria-label="Dismiss notification message" onClick={() => { setDesktopMessage(null); setDesktop((s) => ({ ...s, last_error: null })); }}><Icon name="close" size={15} /></button>

@@ -40,6 +40,8 @@ pub struct Identity {
     pub name: String,
     pub avatar: String,
     pub color: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
 }
 impl Profile {
     pub fn identity(&self) -> Identity {
@@ -48,6 +50,7 @@ impl Profile {
             name: self.name.clone(),
             avatar: self.avatar.clone(),
             color: self.color.clone(),
+            role: if self.role.is_empty() { None } else { Some(self.role.clone()) },
         }
     }
 }

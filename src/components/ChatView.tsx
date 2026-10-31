@@ -8,8 +8,8 @@ import Icon, { VelumMark, type IconName } from "./Icon";
 import type { PluginChatHandle } from "../plugins";
 import { readDraft, saveDraft } from "../desktopHistory";
 import { usePreferences } from "../preferences";
-import type { BotIdentity } from '../bots';
-import BotAvatar from './BotAvatar';
+import { botPresets, type BotIdentity, type BotProfile, type BotView } from '../bots';
+import BotAvatar, { type OrbStatus } from './BotAvatar';
 import UsageStrip from './UsageStrip';
 import MessageQueue from './MessageQueue';
 import AgentActivity from './AgentActivity';
@@ -219,6 +219,129 @@ const STARTERS: { label: string; description: string; icon: IconName; prompt: st
   },
 ];
 
+function getBotStarters(bot: BotIdentity | null): { label: string; description: string; icon: IconName; prompt: string }[] {
+  if (!bot) return STARTERS;
+  const name = (bot.name || "").toLowerCase();
+  const role = (bot.role || "").toLowerCase();
+
+  if (name.includes("reviewer") || role.includes("review")) {
+    return [
+      {
+        label: "Review Git diff",
+        description: "Inspect uncommitted changes for defects and edge cases",
+        icon: "diff",
+        prompt: "/review Review the uncommitted git changes and diff in this project. Inspect carefully for potential bugs, security risks, and edge cases.",
+      },
+      {
+        label: "Verify test coverage",
+        description: "Run existing test suite and check for uncovered paths",
+        icon: "shield",
+        prompt: "/test Run the test suite and verify test coverage for recent changes. Report any untested code or edge cases.",
+      },
+      {
+        label: "Audit error handling",
+        description: "Check boundary cases, error recovery, and failure modes",
+        icon: "bug",
+        prompt: "Audit error handling, invalid input validation, and boundary conditions across recently modified files.",
+      },
+      {
+        label: "Summarize changes",
+        description: "Generate concise bulleted summary of recent work",
+        icon: "memory",
+        prompt: "/diff Summarize all recent modifications, additions, and deletions with clear bullet points.",
+      },
+    ];
+  }
+
+  if (name.includes("builder") || role.includes("build") || role.includes("implementation")) {
+    return [
+      {
+        label: "Implement next feature",
+        description: "Scaffold, implement, and verify a new capability",
+        icon: "plus",
+        prompt: "Help me implement the next feature. Here are the requirements: ",
+      },
+      {
+        label: "Run tests & fix failures",
+        description: "Execute test suite and fix any broken tests cleanly",
+        icon: "check",
+        prompt: "/test Run tests for this project and fix any errors or failures cleanly.",
+      },
+      {
+        label: "Refactor component",
+        description: "Improve modularity, type safety, and code structure",
+        icon: "code",
+        prompt: "/refactor Refactor this component to improve clarity, maintainability, and test coverage.",
+      },
+      {
+        label: "Fix issue / bug",
+        description: "Investigate and resolve a bug or error",
+        icon: "bug",
+        prompt: "/fix Investigate and fix the issue in this project. Explain the cause and provide a clean fix.",
+      },
+    ];
+  }
+
+  if (name.includes("researcher") || role.includes("research") || role.includes("investigation")) {
+    return [
+      {
+        label: "Explain architecture",
+        description: "Map codebase structure, modules, and data flow",
+        icon: "search",
+        prompt: "/explain Explain how this project is structured, including main entry points, data flow, and key design decisions.",
+      },
+      {
+        label: "Investigate issue & plan",
+        description: "Trace root cause and draft a concrete action plan",
+        icon: "bug",
+        prompt: "Investigate this issue, identify root causes, and propose a concrete step-by-step resolution plan: ",
+      },
+      {
+        label: "Generate documentation",
+        description: "Write clear docstrings, types, and architecture notes",
+        icon: "memory",
+        prompt: "/doc Add clear documentation, type annotations, and helpful comments explaining recent components.",
+      },
+      {
+        label: "Explore dependencies",
+        description: "Review external libraries, licenses, and security notes",
+        icon: "shield",
+        prompt: "Review the dependencies and external libraries used in this project, noting any risks or upgrade suggestions.",
+      },
+    ];
+  }
+
+  return [
+    {
+      label: `Work with ${bot.name}`,
+      description: bot.role || "Collaborate on your next task",
+      icon: "sparkles",
+      prompt: `Hello ${bot.name}. Let's work on: `,
+    },
+    ...STARTERS.slice(0, 3),
+  ];
+}
+
+function getRecommendedHandoff(botName?: string): { target: string; label: string; description: string }[] {
+  const name = (botName || "").toLowerCase();
+  if (name.includes("builder")) {
+    return [
+      { target: "Reviewer", label: "Hand off to Reviewer", description: "Let Reviewer audit tests, edge cases, and code quality" },
+    ];
+  }
+  if (name.includes("reviewer")) {
+    return [
+      { target: "Builder", label: "Hand off to Builder", description: "Let Builder implement recommendations and fixes" },
+    ];
+  }
+  if (name.includes("researcher")) {
+    return [
+      { target: "Builder", label: "Hand off to Builder", description: "Let Builder scaffold and implement the researched plan" },
+    ];
+  }
+  return [];
+}
+
 function fmtElapsed(ms: number): string {
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
@@ -324,6 +447,10 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
   const terminalOwnsConversation = terminalFromParent || attachedTerminal;
   const { settings } = usePreferences();
   const [bot,setBot]=useState<BotIdentity|null>(null);
+  const [statusKind, setStatusKind] = useState<AgentStatus["kind"]>("starting");
+  const [availableBots, setAvailableBots] = useState<BotProfile[]>([]);
+  const [botPopoverOpen, setBotPopoverOpen] = useState(false);
+  const botPopoverRef = useRef<HTMLDivElement>(null);
   const [contextSnapshot, setContextSnapshot] = useState<string | null>(null);
   const optionsRef = useRef(options); optionsRef.current = options;
   const [blocks, setBlocks] = useState<Block[]>([]);
@@ -481,10 +608,64 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
   const setStatus = useCallback(
     (s: AgentStatus) => {
       lastStatusRef.current = s;
+      setStatusKind(s.kind);
       statusRef.current(sessionId, { ...s, queued: queueRef.current.items.length, queuePaused: queueRef.current.paused } as AgentStatus);
     },
     [sessionId],
   );
+
+  const orbStatus: OrbStatus = useMemo(() => {
+    if (statusKind === "starting" || initializing) return "starting";
+    if (statusKind === "error") return "error";
+    if (running) {
+      const hasActiveTool = blocks.some((b) => b.kind === "tool" && b.status === "running");
+      return hasActiveTool ? "working" : "thinking";
+    }
+    if (statusKind === "done") return "done";
+    return "idle";
+  }, [statusKind, initializing, running, blocks]);
+
+  useEffect(() => {
+    let mounted = true;
+    void invoke<BotView>("bots_request", { request: { action: "list" } })
+      .then((view) => {
+        if (mounted && view?.profiles) setAvailableBots(view.profiles);
+      })
+      .catch(() => {});
+    return () => { mounted = false; };
+  }, []);
+
+  const peers = useMemo(() => {
+    const list = availableBots.filter((b) => b.enabled && b.id !== botId && b.name.toLowerCase() !== (bot?.name || "").toLowerCase());
+    if (list.length > 0) return list;
+    return botPresets
+      .filter((p) => p.name.toLowerCase() !== (bot?.name || "").toLowerCase())
+      .map((p) => ({
+        id: p.name.toLowerCase(),
+        name: p.name,
+        role: p.role,
+        color: p.color,
+        avatar: "",
+      }));
+  }, [availableBots, botId, bot?.name]);
+
+  useEffect(() => {
+    if (!botPopoverOpen) return;
+    const handleOutside = (e: MouseEvent | PointerEvent) => {
+      if (botPopoverRef.current && !botPopoverRef.current.contains(e.target as Node)) {
+        setBotPopoverOpen(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setBotPopoverOpen(false);
+    };
+    document.addEventListener("pointerdown", handleOutside);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("pointerdown", handleOutside);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [botPopoverOpen]);
 
   useEffect(() => {
     let dispose: (() => void) | undefined;
@@ -1037,12 +1218,108 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
       {/* Session Header Bar */}
       <div className="chat-view-header">
         <div className="chat-view-header-left">
-          <span className="cv-bot-pill">
-            {bot ? <BotAvatar bot={bot} size={20} status={running ? "working" : "idle"} /> : <VelumMark size={20} />}
-            <strong>{bot?.name || providerNames[provider]}</strong>
-            <span className={`cv-status-dot ${running ? "running" : "idle"}`} />
-            <span className="cv-status-text">{running ? (activity || "Working…") : "Ready"}</span>
-          </span>
+          <div className="cv-bot-pill-wrap" ref={botPopoverRef}>
+            <button
+              type="button"
+              className={`cv-bot-pill cv-bot-pill-btn${botPopoverOpen ? " active" : ""}`}
+              onClick={() => setBotPopoverOpen((o) => !o)}
+              aria-expanded={botPopoverOpen}
+              aria-haspopup="dialog"
+              title={bot ? `${bot.name}: ${bot.role || "Active assistant"} (Click for bot menu)` : `${providerNames[provider]} (Click for bot menu)`}
+            >
+              {bot ? <BotAvatar bot={bot} size={20} status={orbStatus} /> : <VelumMark size={20} status={orbStatus} />}
+              <div className="cv-bot-pill-meta">
+                <span className="cv-bot-pill-name">{bot?.name || providerNames[provider]}</span>
+                {bot?.role && <span className="cv-bot-role-chip">{bot.role}</span>}
+              </div>
+              <span className={`cv-status-dot ${running ? "running" : "idle"}`} />
+              <span className="cv-status-text">{running ? (activity || (orbStatus === "working" ? "Working…" : "Thinking…")) : "Ready"}</span>
+              <Icon name="arrow" className={`cv-bot-caret${botPopoverOpen ? " open" : ""}`} size={11} />
+            </button>
+
+            {botPopoverOpen && (
+              <div className="cv-bot-popover" role="dialog" aria-label="Bot quick actions">
+                <div className="cv-popover-header">
+                  <div className="cv-popover-bot-info">
+                    {bot ? <BotAvatar bot={bot} size={36} status={orbStatus} /> : <VelumMark size={36} status={orbStatus} />}
+                    <div>
+                      <div className="cv-popover-title">{bot?.name || providerNames[provider]}</div>
+                      <div className="cv-popover-role">{bot?.role || (bot ? "Specialized Assistant" : "Default Provider Assistant")}</div>
+                    </div>
+                  </div>
+                  <span className={`cv-popover-badge status-${orbStatus}`}>
+                    {orbStatus}
+                  </span>
+                </div>
+
+                <div className="cv-popover-actions">
+                  <button
+                    type="button"
+                    className="cv-popover-action"
+                    onClick={() => {
+                      setBotPopoverOpen(false);
+                      window.dispatchEvent(new CustomEvent("velum:open-bot-memory", { detail: { botId, workspace: effective } }));
+                    }}
+                  >
+                    <Icon name="memory" size={15} />
+                    <div>
+                      <strong>Bot Memory Vault</strong>
+                      <span>Inspect saved lessons, guidance, and project memories</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    className="cv-popover-action"
+                    onClick={() => {
+                      setBotPopoverOpen(false);
+                      window.dispatchEvent(new CustomEvent("velum:open-kanban", { detail: { workspace: effective } }));
+                    }}
+                  >
+                    <Icon name="board" size={15} />
+                    <div>
+                      <strong>Kanban Tasks</strong>
+                      <span>Open workspace tasks and assign to this bot</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    className="cv-popover-action"
+                    onClick={() => {
+                      setBotPopoverOpen(false);
+                      window.dispatchEvent(new CustomEvent("velum:open-bot-manage"));
+                    }}
+                  >
+                    <Icon name="bot" size={15} />
+                    <div>
+                      <strong>Manage Bots & Schedules</strong>
+                      <span>Configure bot instructions, tools, and autonomous triggers</span>
+                    </div>
+                  </button>
+                </div>
+
+                <div className="cv-popover-section-label">Quick Peer Handoff</div>
+                <div className="cv-popover-peers">
+                  {peers.map((peer) => (
+                    <button
+                      key={peer.id}
+                      type="button"
+                      className="cv-peer-chip"
+                      onClick={() => {
+                        setBotPopoverOpen(false);
+                        window.dispatchEvent(new CustomEvent("velum:handoff-bot", { detail: { botId: peer.id, botName: peer.name } }));
+                      }}
+                      title={`Hand off this conversation to ${peer.name} (${peer.role || "Peer Bot"})`}
+                    >
+                      <BotAvatar bot={peer} size={18} status="idle" />
+                      <span>{peer.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
           {effective && (
             <span className="cv-project-pill" title={effective}>
               <Icon name="folder" size={13} />
@@ -1114,12 +1391,12 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
           <div ref={scrollRef} className="chat-scroll" onScroll={onScroll}>
             {blocks.length === 0 && interactions.requests.length === 0 && (
               <div className="chat-empty">
-                <div className="welcome-mark">{bot?<BotAvatar bot={bot} size={62} status={running ? "working" : "idle"}/>:<VelumMark size={62}/>}</div>
+                <div className="welcome-mark">{bot ? <BotAvatar bot={bot} size={64} status={orbStatus} /> : <VelumMark size={64} status={orbStatus} />}</div>
                 <span className="welcome-eyebrow">From an idea to something real</span>
-                <h2>{bot?`${bot.name}, ready to help.`:'What are we building?'}</h2>
+                <h2>{bot ? `${bot.name}, ready to help.` : 'What are we building?'}</h2>
                 <p>Describe what you want to make. Or choose a starting point and make the prompt your own.</p>
                 <div className="chat-starters">
-                  {STARTERS.map((s) => (
+                  {getBotStarters(bot).map((s) => (
                     <button
                       key={s.label}
                       type="button"
@@ -1183,7 +1460,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                   return (
                     <div key={b.id} className="msg assistant">
                       <div className="message-header">
-                        <span className="message-avatar muse-avatar">{bot?<BotAvatar bot={bot} size={38} status={b.open && running ? "working" : "idle"}/>:<VelumMark size={38}/>}</span>
+                        <span className="message-avatar muse-avatar">{bot ? <BotAvatar bot={bot} size={38} status={b.open && running ? orbStatus : "idle"} /> : <VelumMark size={38} status={b.open && running ? orbStatus : "idle"} />}</span>
                         <div className="message-author"><strong>{bot?.name||providerNames[provider]}<span className="assistant-badge">{bot?providerNames[provider]:'AI'}</span></strong></div>
                         <CopyButton text={b.text} />
                         <button type="button" className="memory-usage" aria-label="Remember this answer" onClick={()=>onRemember(b.text)}><Icon name="memory" size={15}/></button>
@@ -1231,6 +1508,34 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                               <span>View {gitChangedCount} changed {gitChangedCount === 1 ? 'file' : 'files'}</span>
                             </button>
                           ) : null}
+                          <div className="turn-handoff-row">
+                            <span className="turn-handoff-label">Next step:</span>
+                            {getRecommendedHandoff(bot?.name).map((rec) => (
+                              <button
+                                key={rec.target}
+                                type="button"
+                                className="turn-handoff-btn"
+                                onClick={() => {
+                                  window.dispatchEvent(new CustomEvent("velum:handoff-bot", { detail: { botName: rec.target } }));
+                                }}
+                                title={rec.description}
+                              >
+                                <Icon name="arrow" size={11} />
+                                <span>{rec.label}</span>
+                              </button>
+                            ))}
+                            <button
+                              type="button"
+                              className="turn-handoff-btn secondary"
+                              onClick={() => {
+                                window.dispatchEvent(new CustomEvent("velum:handoff-bot", { detail: {} }));
+                              }}
+                              title="Choose another bot or peer to continue this work"
+                            >
+                              <Icon name="bot" size={11} />
+                              <span>Hand off…</span>
+                            </button>
+                          </div>
                         </div>
                       )}
                       {correction?.id === b.id && <CorrectionComposer running={running} disabled={!ready || applying} owner={bot?.name} onClose={closeCorrection} remember={rememberLesson} submit={async (text,lesson)=>{

@@ -4,6 +4,7 @@ export interface BotIdentity {
   name: string;
   avatar: string;
   color: string;
+  role?: string;
 }
 export interface BotProfile extends BotIdentity {
   role: string;
