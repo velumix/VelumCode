@@ -98,3 +98,41 @@ test("tool execution cards show duration telemetry and 1-click copy action", asy
   const axe = await new AxeBuilder({ page }).include(".tool-card").analyze();
   expect(axe.violations).toEqual([]);
 });
+
+test("unified header hierarchy, assistant summary pill, and chat view mode toggle pass accessibility", async ({ page }) => {
+  await boot(page);
+
+  // 1. Assistant summary pill bar
+  const assistantSummary = page.locator(".assistant-summary");
+  await expect(assistantSummary).toBeVisible();
+  await expect(assistantSummary.locator(".assistant-summary-provider")).toBeVisible();
+  await expect(assistantSummary.locator(".assistant-summary-model")).toBeVisible();
+
+  // 2. Chat view header with bot pill and mode toggle
+  const chatHeader = page.locator(".chat-view-header");
+  await expect(chatHeader).toBeVisible();
+  await expect(chatHeader.locator(".cv-bot-pill")).toBeVisible();
+
+  const modeToggle = chatHeader.locator(".cv-mode-toggle");
+  await expect(modeToggle).toBeVisible();
+  const streamBtn = modeToggle.getByRole("button", { name: "Stream" });
+  const splitBtn = modeToggle.getByRole("button", { name: "Split" });
+  const dashBtn = modeToggle.getByRole("button", { name: "Dashboard" });
+
+  await expect(streamBtn).toBeVisible();
+  await expect(splitBtn).toBeVisible();
+  await expect(dashBtn).toBeVisible();
+
+  // 3. Switch to Split mode
+  await splitBtn.click();
+  await expect(splitBtn).toHaveClass(/active/);
+  await expect(page.locator(".chat-main-area")).toHaveClass(/mode-split/);
+
+  // Switch back to Stream mode
+  await streamBtn.click();
+  await expect(streamBtn).toHaveClass(/active/);
+
+  // 4. Accessibility check
+  const axe = await new AxeBuilder({ page }).include(".assistant-summary").include(".chat-view-header").analyze();
+  expect(axe.violations).toEqual([]);
+});
