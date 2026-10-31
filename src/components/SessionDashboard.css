@@ -1230,6 +1230,107 @@
   gap: 14px;
 }
 
+.sd-telemetry-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border, #36383b);
+}
+
+.sd-telemetry-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sd-telemetry-heading strong {
+  font-size: calc(12.5px * var(--ui-scale, 1));
+  font-weight: 650;
+  color: var(--text, #e8eaed);
+}
+
+.sd-telemetry-heading span {
+  font-size: calc(10.5px * var(--ui-scale, 1));
+  color: var(--muted, #adb1b9);
+}
+
+/* Context Gauge */
+.sd-context-gauge-card {
+  padding: 12px;
+  border: 1px solid var(--border, #36383b);
+  border-radius: 8px;
+  background: var(--raised, #202125);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: all 140ms ease;
+}
+
+.sd-context-gauge-card.warning {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.sd-gauge-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sd-gauge-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text, #e8eaed);
+  font-size: calc(11.5px * var(--ui-scale, 1));
+}
+
+.sd-gauge-title-row svg {
+  color: var(--accent, #84baff);
+}
+
+.sd-gauge-stat {
+  font-size: calc(11px * var(--ui-scale, 1));
+  font-family: var(--code-font, monospace);
+  color: var(--text, #e8eaed);
+  font-weight: 600;
+}
+
+.sd-gauge-track {
+  height: 7px;
+  border-radius: 999px;
+  background: var(--panel, #18191e);
+  overflow: hidden;
+  border: 1px solid var(--border, #36383b);
+}
+
+.sd-gauge-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #6edcb4, #60a5fa);
+  transition: width 240ms ease;
+}
+
+.sd-gauge-fill.warning {
+  background: linear-gradient(90deg, #f59e0b, #ef4444);
+}
+
+.sd-gauge-subtext {
+  font-size: calc(10px * var(--ui-scale, 1));
+  color: var(--muted, #adb1b9);
+}
+
+.sd-warning-text {
+  color: #f87171;
+  font-weight: 550;
+}
+
+/* Metric Grid */
 .sd-telemetry-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -1243,19 +1344,186 @@
   background: var(--raised, #202125);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .sd-metric-label {
-  font-size: calc(10px * var(--ui-scale, 1));
+  font-size: calc(9.5px * var(--ui-scale, 1));
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--muted, #adb1b9);
+  font-weight: 600;
 }
 
 .sd-metric-value {
-  font-size: calc(18px * var(--ui-scale, 1));
+  font-size: calc(16px * var(--ui-scale, 1));
   font-weight: 700;
+  color: var(--text, #e8eaed);
+  font-family: var(--code-font, monospace);
+}
+
+.sd-metric-sub {
+  font-size: calc(10px * var(--ui-scale, 1));
+  color: var(--muted, #adb1b9);
+}
+
+/* Tool Telemetry Card */
+.sd-tool-telemetry-card {
+  padding: 12px;
+  border: 1px solid var(--border, #36383b);
+  border-radius: 8px;
+  background: var(--raised, #202125);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sd-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text, #e8eaed);
+  font-size: calc(11.5px * var(--ui-scale, 1));
+}
+
+.sd-card-title-row svg {
+  color: var(--accent, #84baff);
+}
+
+.sd-telemetry-pill {
+  margin-left: auto;
+  font-size: calc(9.5px * var(--ui-scale, 1));
+  color: var(--muted, #adb1b9);
+  background: var(--panel, #18191e);
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border, #36383b);
+}
+
+.sd-tool-telemetry-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.sd-stat-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--panel, #18191e);
+  border: 1px solid var(--border, #36383b);
+  text-align: center;
+}
+
+.sd-stat-num {
+  font-size: calc(14px * var(--ui-scale, 1));
+  font-weight: 700;
+  color: var(--accent, #84baff);
+  font-family: var(--code-font, monospace);
+}
+
+.sd-stat-desc {
+  font-size: calc(9.5px * var(--ui-scale, 1));
+  color: var(--muted, #adb1b9);
+  margin-top: 2px;
+}
+
+.sd-category-breakdown-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sd-cat-chip {
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: calc(9.5px * var(--ui-scale, 1));
+  font-weight: 600;
+  background: var(--panel, #18191e);
+  border: 1px solid var(--border, #36383b);
+  color: var(--text, #e8eaed);
+}
+
+.sd-cat-chip.cat-shell { border-color: rgba(132, 186, 255, 0.3); color: var(--accent, #84baff); }
+.sd-cat-chip.cat-file { border-color: rgba(167, 139, 250, 0.3); color: #c084fc; }
+.sd-cat-chip.cat-search { border-color: rgba(52, 211, 153, 0.3); color: #34d399; }
+.sd-cat-chip.cat-git { border-color: rgba(251, 146, 60, 0.3); color: #fb923c; }
+.sd-cat-chip.cat-err { border-color: rgba(248, 113, 113, 0.4); color: #f87171; background: rgba(248, 113, 113, 0.1); }
+
+.sd-slowest-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: calc(10.5px * var(--ui-scale, 1));
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.sd-slowest-label {
+  color: var(--muted, #adb1b9);
+  flex-shrink: 0;
+}
+
+.sd-slowest-chip {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--panel, #18191e);
+  border: 1px solid var(--border, #36383b);
+  color: var(--text, #e8eaed);
+  font-family: var(--code-font, monospace);
+  font-size: calc(10px * var(--ui-scale, 1));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sd-slowest-time {
+  color: #f59e0b;
+  font-weight: 600;
+  font-family: var(--code-font, monospace);
+  flex-shrink: 0;
+}
+
+/* Environment Specs Card */
+.sd-env-specs-card {
+  padding: 12px;
+  border: 1px solid var(--border, #36383b);
+  border-radius: 8px;
+  background: var(--raised, #202125);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sd-env-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.sd-env-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--panel, #18191e);
+  border: 1px solid var(--border, #36383b);
+}
+
+.sd-env-label {
+  font-size: calc(9px * var(--ui-scale, 1));
+  text-transform: uppercase;
+  color: var(--muted, #adb1b9);
+  letter-spacing: 0.05em;
+}
+
+.sd-env-val {
+  font-size: calc(11px * var(--ui-scale, 1));
+  font-weight: 600;
   color: var(--text, #e8eaed);
 }
 

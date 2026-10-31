@@ -4,7 +4,7 @@ import Icon, { VelumMark } from "./Icon";
 import BotAvatar from "./BotAvatar";
 import type { BotIdentity } from "../bots";
 import { providerNames, type Provider, type RunOptions } from "../providers";
-import type { UsageSnapshot } from "../usage";
+import { tokenRate, type UsageSnapshot } from "../usage";
 import { extractToolSnippet, fmtToolDuration, friendlyTool, toolCategory } from "../conversationUX";
 import { copyText } from "./clip";
 import {
@@ -95,9 +95,24 @@ export default function SessionDashboard({
   const [diffSearch, setDiffSearch] = useState("");
   const [copiedDiff, setCopiedDiff] = useState(false);
   const [expandedToolIds, setExpandedToolIds] = useState<Set<number>>(new Set());
+  const [copiedToolId, setCopiedToolId] = useState<number | null>(null);
   const [toolSearch, setToolSearch] = useState("");
   const [toolCategoryFilter, setToolCategoryFilter] = useState<"all" | "shell" | "file" | "search" | "git" | "error">("all");
-  const [copiedToolId, setCopiedToolId] = useState<number | null>(null);
+  const [copiedTelemetry, setCopiedTelemetry] = useState(false);
+
+  // Telemetry computations
+  const contextUsed = usage.context?.used_tokens ?? usage.turn?.input_tokens ?? 0;
+  const contextCapacity = usage.context?.window_tokens;
+  const contextPercent = contextCapacity && contextCapacity > 0 ? Math.min(100, Math.round((contextUsed / contextCapacity) * 100)) : null;
+  const isContextWarning = contextPercent != null && contextPercent >= 80;
+
+  const turnInput = usage.turn?.input_tokens;
+  const turnCached = usage.turn?.cached_input_tokens;
+  const cacheHitPercent = turnInput && turnCached && turnInput > 0 ? Math.round((turnCached / turnInput) * 100) : null;
+  const turnOutput = usage.turn?.output_tokens;
+  const turnReasoning = usage.turn?.reasoning_output_tokens;
+  const reasoningPercent = turnOutput && turnReasoning && turnOutput > 0 ? Math.round((turnReasoning / turnOutput) * 100) : null;
+  const turnSpeed = tokenRate(usage.turn);
   const [board, setBoard] = useState<Board | null>(null);
   const [loadingBoard, setLoadingBoard] = useState(false);
   const [taskSectionFilter, setTaskSectionFilter] = useState<"all" | "plan" | "kanban">("all");
@@ -276,6 +291,55 @@ export default function SessionDashboard({
     }
     return { cmdCount, fileCount, searchCount, gitCount, errorCount, total: toolActions.length };
   }, [toolActions]);
+
+  const totalToolDurationMs = useMemo(() => {
+    return toolActions.reduce((acc, t) => acc + (t.durationMs || 0), 0);
+  }, [toolActions]);
+
+  const avgToolDurationMs = useMemo(() => {
+    return toolActions.length > 0 ? Math.round(totalToolDurationMs / toolActions.length) : 0;
+  }, [toolActions, totalToolDurationMs]);
+
+  const slowestTool = useMemo(() => {
+    if (toolActions.length === 0) return null;
+    return toolActions.reduce((max, t) => ((t.durationMs || 0) > (max.durationMs || 0) ? t : max), toolActions[0]);
+  }, [toolActions]);
+
+  const successfulToolsCount = useMemo(() => {
+    return toolActions.filter((t) => t.status === "completed").length;
+  }, [toolActions]);
+
+  const copyTelemetry = useCallback(async () => {
+    const summary = {
+      provider: providerNames[provider],
+      model: options.model || "Default",
+      reasoning: options.reasoning || "Standard",
+      bot: bot?.name || "None",
+      context: {
+        used_tokens: contextUsed,
+        capacity_tokens: contextCapacity,
+        percent: contextPercent,
+      },
+      turn: {
+        input_tokens: turnInput,
+        cached_tokens: turnCached,
+        output_tokens: turnOutput,
+        reasoning_tokens: turnReasoning,
+        velocity_tps: turnSpeed ? Number(turnSpeed.toFixed(1)) : null,
+        elapsed_ms: usage.turn?.elapsed_ms,
+      },
+      tools: {
+        total: toolActions.length,
+        success_rate: toolActions.length > 0 ? `${Math.round((successfulToolsCount / toolActions.length) * 100)}%` : "100%",
+        total_duration_ms: totalToolDurationMs,
+        avg_duration_ms: avgToolDurationMs,
+        counts: toolStats,
+      },
+    };
+    await copyText(JSON.stringify(summary, null, 2));
+    setCopiedTelemetry(true);
+    setTimeout(() => setCopiedTelemetry(false), 1400);
+  }, [provider, options.model, options.reasoning, bot?.name, contextUsed, contextCapacity, contextPercent, turnInput, turnCached, turnOutput, turnReasoning, turnSpeed, usage.turn?.elapsed_ms, toolActions.length, successfulToolsCount, totalToolDurationMs, avgToolDurationMs, toolStats]);
 
   const filteredTools = useMemo(() => {
     const q = toolSearch.trim().toLowerCase();
@@ -1104,40 +1168,170 @@ export default function SessionDashboard({
         {/* Tab 4: Telemetry */}
         {activeTab === "telemetry" && (
           <div className="sd-telemetry-pane">
+            {/* Header with Export / Copy Diagnostics */}
+            <div className="sd-telemetry-topbar">
+              <div className="sd-telemetry-heading">
+                <strong>Session Telemetry & Benchmarks</strong>
+                <span>Real-time token usage, context fullness, and tool execution latencies</span>
+              </div>
+              <button
+                type="button"
+                className={`sd-action-chip sd-copy-btn${copiedTelemetry ? " copied" : ""}`}
+                title="Copy structured telemetry JSON to clipboard"
+                onClick={() => void copyTelemetry()}
+              >
+                <Icon name={copiedTelemetry ? "check" : "copy"} size={12} />
+                <span>{copiedTelemetry ? "Copied JSON" : "Copy Diagnostics"}</span>
+              </button>
+            </div>
+
+            {/* Context Window Capacity Gauge */}
+            <div className={`sd-context-gauge-card${isContextWarning ? " warning" : ""}`}>
+              <div className="sd-gauge-header">
+                <div className="sd-gauge-title-row">
+                  <Icon name="memory" size={14} />
+                  <strong>Context Window Capacity</strong>
+                </div>
+                <span className="sd-gauge-stat">
+                  {contextUsed.toLocaleString()}{contextCapacity ? ` / ${contextCapacity.toLocaleString()} tokens` : " tokens"}
+                  {contextPercent != null ? ` (${contextPercent}%)` : ""}
+                </span>
+              </div>
+              <div className="sd-gauge-track">
+                <div
+                  className={`sd-gauge-fill${isContextWarning ? " warning" : ""}`}
+                  style={{ width: `${contextPercent ?? Math.min(100, Math.round((contextUsed / 128000) * 100))}%` }}
+                />
+              </div>
+              <div className="sd-gauge-subtext">
+                {contextCapacity ? (
+                  isContextWarning ? (
+                    <span className="sd-warning-text">⚠️ Context window is over 80% full. Consider summarizing or opening a new tab.</span>
+                  ) : (
+                    <span>Provider context headroom is healthy.</span>
+                  )
+                ) : (
+                  <span>Measured token usage for current session.</span>
+                )}
+              </div>
+            </div>
+
+            {/* Token Generation Grid */}
             <div className="sd-telemetry-grid">
               <div className="sd-metric-card">
-                <span className="sd-metric-label">Provider</span>
-                <span className="sd-metric-value" style={{ fontSize: "14px" }}>
-                  {providerNames[provider]}
-                </span>
-              </div>
-              <div className="sd-metric-card">
-                <span className="sd-metric-label">Model</span>
-                <span className="sd-metric-value" style={{ fontSize: "13px" }}>
-                  {options.model || "Default"}
-                </span>
-              </div>
-              <div className="sd-metric-card">
-                <span className="sd-metric-label">Prompt Tokens</span>
+                <span className="sd-metric-label">Prompt Input</span>
                 <span className="sd-metric-value">
-                  {usage.turn?.input_tokens?.toLocaleString() || usage.context?.used_tokens?.toLocaleString() || "—"}
+                  {turnInput != null ? turnInput.toLocaleString() : "—"}
+                </span>
+                <span className="sd-metric-sub">
+                  {turnCached ? `${turnCached.toLocaleString()} cached (${cacheHitPercent}%)` : "No cache hits"}
                 </span>
               </div>
+
               <div className="sd-metric-card">
-                <span className="sd-metric-label">Output Tokens</span>
+                <span className="sd-metric-label">Output Generated</span>
                 <span className="sd-metric-value">
-                  {usage.turn?.output_tokens?.toLocaleString() || "—"}
+                  {turnOutput != null ? turnOutput.toLocaleString() : "—"}
+                </span>
+                <span className="sd-metric-sub">
+                  {turnSpeed ? `${turnSpeed.toFixed(1)} tokens/sec` : "Generation velocity"}
+                </span>
+              </div>
+
+              <div className="sd-metric-card">
+                <span className="sd-metric-label">Reasoning / Thinking</span>
+                <span className="sd-metric-value">
+                  {turnReasoning != null ? turnReasoning.toLocaleString() : "—"}
+                </span>
+                <span className="sd-metric-sub">
+                  {reasoningPercent != null ? `${reasoningPercent}% of generated tokens` : "Chain-of-thought tokens"}
+                </span>
+              </div>
+
+              <div className="sd-metric-card">
+                <span className="sd-metric-label">Turn Duration</span>
+                <span className="sd-metric-value">
+                  {usage.turn?.elapsed_ms != null ? fmtToolDuration(usage.turn.elapsed_ms) : "—"}
+                </span>
+                <span className="sd-metric-sub">
+                  Total turn round-trip
                 </span>
               </div>
             </div>
 
-            {bot && (
-              <div className="sd-metric-card">
-                <span className="sd-metric-label">Bot Identity</span>
-                <strong>{bot.name}</strong>
-                <span style={{ fontSize: "11px", color: "var(--muted)" }}>Autonomous Assistant</span>
+            {/* Tool Execution Telemetry */}
+            <div className="sd-tool-telemetry-card">
+              <div className="sd-card-title-row">
+                <Icon name="terminal" size={14} />
+                <strong>Tool Execution Telemetry</strong>
+                <span className="sd-telemetry-pill">
+                  {toolActions.length} total {toolActions.length === 1 ? "call" : "calls"}
+                </span>
               </div>
-            )}
+
+              <div className="sd-tool-telemetry-stats">
+                <div className="sd-stat-box">
+                  <span className="sd-stat-num">{fmtToolDuration(totalToolDurationMs)}</span>
+                  <span className="sd-stat-desc">Total Tool Time</span>
+                </div>
+                <div className="sd-stat-box">
+                  <span className="sd-stat-num">{fmtToolDuration(avgToolDurationMs)}</span>
+                  <span className="sd-stat-desc">Average Latency</span>
+                </div>
+                <div className="sd-stat-box">
+                  <span className="sd-stat-num">
+                    {toolActions.length > 0 ? `${Math.round((successfulToolsCount / toolActions.length) * 100)}%` : "100%"}
+                  </span>
+                  <span className="sd-stat-desc">Success Rate</span>
+                </div>
+              </div>
+
+              <div className="sd-category-breakdown-row">
+                <span className="sd-cat-chip cat-shell">Commands: {toolStats.cmdCount}</span>
+                <span className="sd-cat-chip cat-file">Files: {toolStats.fileCount}</span>
+                <span className="sd-cat-chip cat-search">Search: {toolStats.searchCount}</span>
+                <span className="sd-cat-chip cat-git">Git: {toolStats.gitCount}</span>
+                {toolStats.errorCount > 0 && (
+                  <span className="sd-cat-chip cat-err">Errors: {toolStats.errorCount}</span>
+                )}
+              </div>
+
+              {slowestTool && (
+                <div className="sd-slowest-row">
+                  <span className="sd-slowest-label">Slowest Operation:</span>
+                  <code className="sd-slowest-chip" title={slowestTool.detail || slowestTool.name}>
+                    {slowestTool.detail || friendlyTool(slowestTool.name)}
+                  </code>
+                  <span className="sd-slowest-time">({fmtToolDuration(slowestTool.durationMs || 0)})</span>
+                </div>
+              )}
+            </div>
+
+            {/* Environment & Persona Specs */}
+            <div className="sd-env-specs-card">
+              <div className="sd-card-title-row">
+                <Icon name="settings" size={14} />
+                <strong>Environment & Persona</strong>
+              </div>
+              <div className="sd-env-grid">
+                <div>
+                  <span className="sd-env-label">Provider</span>
+                  <span className="sd-env-val">{providerNames[provider]}</span>
+                </div>
+                <div>
+                  <span className="sd-env-label">Model</span>
+                  <span className="sd-env-val">{options.model || "Default"}</span>
+                </div>
+                <div>
+                  <span className="sd-env-label">Reasoning</span>
+                  <span className="sd-env-val">{options.reasoning || "Standard"}</span>
+                </div>
+                <div>
+                  <span className="sd-env-label">Active Bot</span>
+                  <span className="sd-env-val">{bot ? bot.name : "Default Assistant"}</span>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
