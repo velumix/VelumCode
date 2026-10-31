@@ -11,21 +11,13 @@ import {
   describeFile,
   parseStatus,
   type ChangedFile,
+  type GitState,
 } from "./gitStatus";
 import { DiffLines, getDiffStats } from "./diffViewer";
 import GitHubHub from "./GitHubHub";
 import { taskBlockers, isOverdue, type Board, type Card, type Column } from "../kanban";
 import "./SessionDashboard.css";
 import "./GitPanel.css";
-
-interface GitState {
-  root: string;
-  current: string;
-  status: string;
-  branches: { name: string; upstream: string; head: string }[];
-  ahead?: number;
-  behind?: number;
-}
 
 export interface TodoItem {
   text: string;

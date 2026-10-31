@@ -6,38 +6,14 @@ import {
   groupStatus,
   parseStatus,
   summarizeStatus,
+  type Branch,
   type ChangedFile,
+  type Commit,
+  type GitState,
 } from "./gitStatus";
+import { copyText } from "./clip";
 import "./GitPanel.css";
-
-interface Branch {
-  name: string;
-  upstream: string;
-  head: string;
-}
-
-interface Commit {
-  hash: string;
-  short: string;
-  author: string;
-  date: string;
-  subject: string;
-}
-
-interface GitState {
-  root: string;
-  current: string;
-  branches: Branch[];
-  branches_truncated: boolean;
-  status: string;
-  status_truncated: boolean;
-  log?: Commit[];
-  log_truncated?: boolean;
-  upstream?: string;
-  ahead?: number;
-  behind?: number;
-  remote_url?: string;
-}
+export type { Branch, Commit, GitState };
 
 import GitHubHub from "./GitHubHub";
 import { DiffLines, parseDiff, getDiffStats, type DiffRow } from "./diffViewer";
@@ -207,11 +183,9 @@ export default function GitPanel({
 
   const copyDiff = useCallback(async () => {
     if (!diff) return;
-    try {
-      await navigator.clipboard.writeText(diff);
-      setCopied(true);
-    } catch {
-      setCopied(false);
+    const ok = await copyText(diff);
+    setCopied(ok);
+    if (!ok) {
       setError("Copy unavailable — select the diff text manually.");
     }
   }, [diff]);

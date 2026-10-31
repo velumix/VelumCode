@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { copyText } from "./clip";
 import Icon from "./Icon";
 import {
   clearGitHubPat,
@@ -275,12 +276,10 @@ export default function GitHubHub({ workspace, onClose, embedded = false, onInse
   };
 
   const copyToClipboard = async (text: string, label: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
+    const ok = await copyText(text);
+    if (ok) {
       setCopiedUrl(label);
       setTimeout(() => setCopiedUrl(""), 2000);
-    } catch {
-      // fallback
     }
   };
 

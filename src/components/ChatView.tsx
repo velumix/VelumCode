@@ -17,7 +17,7 @@ import CorrectionComposer from './CorrectionComposer';
 import RequestRecovery from './RequestRecovery';
 import InteractionPanel, { PermissionRecord } from './InteractionPanel';
 import { emptyInteractions, mergeInteractionResponse, type InteractionSnapshot } from '../interactions';
-import { correctionPrompt, extractToolSnippet, filterSlashCommands, fmtToolDuration, friendlyTool, groupActivity, lastMatch, latestRecovery, lessonTitle, projectName, recoverableRequest, type RecoverableRequest, type SlashCommand } from '../conversationUX';
+import { correctionPrompt, extractToolSnippet, filterSlashCommands, fmtToolDuration, friendlyTool, groupActivity, lastMatch, latestRecovery, lessonTitle, projectName, recoverableRequest, statusTone, type RecoverableRequest, type SlashCommand } from '../conversationUX';
 import type { MemoryView } from '../memory';
 import { emptyQueue, type MessageQueue as Queue } from '../messageQueue';
 import ProviderWait from './ProviderWait';
@@ -102,12 +102,6 @@ const RENDER_CAP = 4000;
 
 function isPlainAllow(decision: string): boolean {
   return decision === "not_applicable" || decision.startsWith("allow:");
-}
-
-function statusTone(status: string): "ok" | "bad" | "busy" {
-  if (status === "completed") return "ok";
-  if (status === "failed" || status === "blocked" || status === "rejected" || status === "cancelled") return "bad";
-  return "busy";
 }
 
 function preview(text: string): { head: string; rest: number } {
@@ -342,44 +336,23 @@ function getRecommendedHandoff(botName?: string): { target: string; label: strin
   return [];
 }
 
-function fmtElapsed(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m ${s % 60}s`;
-}
-
-function CopyButton({ text }: { text: string }) {
+function CopyButton({
+  text,
+  variant = "msg",
+}: {
+  text: string;
+  variant?: "msg" | "tool";
+}) {
   const [copied, setCopied] = useState(false);
+  const isTool = variant === "tool";
   return (
     <button
       type="button"
-      className={`msg-copy${copied ? " copied" : ""}`}
-      aria-label={copied ? "Message copied" : "Copy message"}
-      title={copied ? "Copied" : "Copy message"}
-      onClick={() => {
-        void copyText(text).then((ok) => {
-          if (!ok) return;
-          setCopied(true);
-          window.setTimeout(() => setCopied(false), 1200);
-        });
-      }}
-    >
-      <Icon name={copied ? "check" : "copy"} size={15} />
-      {copied && <span className="copy-feedback" role="status">Copied</span>}
-    </button>
-  );
-}
-
-function ToolCopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      type="button"
-      className={`tool-output-copy${copied ? " copied" : ""}`}
-      aria-label={copied ? "Tool output copied" : "Copy tool output"}
-      title={copied ? "Copied" : "Copy output"}
+      className={`${isTool ? "tool-output-copy" : "msg-copy"}${copied ? " copied" : ""}`}
+      aria-label={copied ? (isTool ? "Tool output copied" : "Message copied") : (isTool ? "Copy tool output" : "Copy message")}
+      title={copied ? "Copied" : (isTool ? "Copy output" : "Copy message")}
       onClick={(e) => {
-        e.stopPropagation();
+        if (isTool) e.stopPropagation();
         void copyText(text).then((ok) => {
           if (!ok) return;
           setCopied(true);
@@ -387,8 +360,12 @@ function ToolCopyButton({ text }: { text: string }) {
         });
       }}
     >
-      <Icon name={copied ? "check" : "copy"} size={12} />
-      <span>{copied ? "Copied" : "Copy"}</span>
+      <Icon name={copied ? "check" : "copy"} size={isTool ? 12 : 15} />
+      {isTool ? (
+        <span>{copied ? "Copied" : "Copy"}</span>
+      ) : (
+        copied && <span className="copy-feedback" role="status">Copied</span>
+      )}
     </button>
   );
 }
@@ -435,7 +412,7 @@ function ToolBlock({ block }: { block: Extract<Block, { kind: "tool" }> }) {
               {rest > 0 && <span className="tool-more">{`\n…${rest} more lines`}</span>}
             </pre>
           )}
-          <ToolCopyButton text={body} />
+          <CopyButton text={body} variant="tool" />
         </div>
       ) : null}
     </div>
@@ -1581,7 +1558,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
           <div className="chat-running" role="status">
             <span className="thinking-dots" aria-hidden="true"><i /><i /><i /></span>
             {providerProgress?.phase === 'retrying' ? <ProviderWait progress={providerProgress} provider={provider}/> : <>
-              Working…{elapsed >= 1000 ? ` ${fmtElapsed(elapsed)}` : ""}
+              Working…{elapsed >= 1000 ? ` ${fmtToolDuration(elapsed)}` : ""}
               {activity ? ` · ${activity}` : ""}
             </>}
           </div>

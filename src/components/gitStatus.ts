@@ -4,6 +4,35 @@ export interface ChangedFile {
   path: string;
 }
 
+export interface Branch {
+  name: string;
+  upstream?: string;
+  head?: string;
+}
+
+export interface Commit {
+  hash: string;
+  short: string;
+  author: string;
+  date: string;
+  subject: string;
+}
+
+export interface GitState {
+  root: string;
+  current: string;
+  branches: Branch[];
+  branches_truncated?: boolean;
+  status: string;
+  status_truncated?: boolean;
+  log?: Commit[];
+  log_truncated?: boolean;
+  upstream?: string;
+  ahead?: number;
+  behind?: number;
+  remote_url?: string;
+}
+
 // Parse `git status --short --branch` text: the `##` header line plus one
 // changed file per remaining line. Rename arrows resolve to the new path.
 export function parseStatus(text: string): { header: string; files: ChangedFile[] } {

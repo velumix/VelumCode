@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { isTauri } from "@tauri-apps/api/core";
 import { copyText } from "./clip";
+import { DiffLines } from "./diffViewer";
 
 function isWebUrl(href: string): boolean {
   return /^https?:\/\//i.test(href);
@@ -30,34 +31,6 @@ function MdLink({ href, children }: { href?: string; children?: ReactNode }) {
     >
       {children}
     </a>
-  );
-}
-
-function DiffLines({ text }: { text: string }) {
-  const lines = text.split("\n");
-  return (
-    <>
-      {lines.map((line, i) => {
-        const isLast = i === lines.length - 1 && line === "";
-        if (isLast) return null;
-        const kind =
-          line.startsWith("+") && !line.startsWith("+++")
-            ? "add"
-            : line.startsWith("-") && !line.startsWith("---")
-              ? "del"
-              : line.startsWith("@@")
-                ? "hunk"
-                : line.startsWith("diff --git") || line.startsWith("index ") || line.startsWith("--- ") || line.startsWith("+++ ")
-                  ? "hdr"
-                  : "ctx";
-        return (
-          <span key={i} className={`git-diff-${kind}`}>
-            {line}
-            {"\n"}
-          </span>
-        );
-      })}
-    </>
   );
 }
 

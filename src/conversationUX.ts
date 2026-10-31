@@ -154,6 +154,12 @@ export function toolCategory(name: string): "shell" | "file" | "search" | "git" 
   return "mcp";
 }
 
+export function statusTone(status: string): "ok" | "bad" | "busy" {
+  if (status === "completed") return "ok";
+  if (status === "failed" || status === "blocked" || status === "rejected" || status === "cancelled") return "bad";
+  return "busy";
+}
+
 export function fmtToolDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   const s = ms / 1000;
