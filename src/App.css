@@ -269,6 +269,22 @@ kbd { font: inherit; }
 .tool-dot.bad { background: var(--danger); }
 .tool-dot.busy { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
 .tool-name { font-weight: 500; }
+.tool-target-pill {
+  display: inline-block;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  color: var(--text);
+  font-family: var(--code-font);
+  font-size: calc(10.5px * var(--ui-scale));
+  font-weight: 400;
+  vertical-align: middle;
+}
 .tool-duration { padding: 1px 5px; border-radius: 4px; background: var(--accent-dim); border: 1px solid var(--accent-border, transparent); color: var(--subtle); font-size: calc(10px * var(--ui-scale)); font-family: var(--code-font); font-variant-numeric: tabular-nums; }
 .tool-status { margin-left: auto; color: var(--muted); font-size: calc(10px * var(--ui-scale)); }
 .tool-caret { color: var(--muted); margin-left: 4px; }

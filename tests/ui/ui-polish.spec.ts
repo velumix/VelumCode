@@ -136,3 +136,74 @@ test("unified header hierarchy, assistant summary pill, and chat view mode toggl
   const axe = await new AxeBuilder({ page }).include(".assistant-summary").include(".chat-view-header").analyze();
   expect(axe.violations).toEqual([]);
 });
+
+test("mission dashboard tools log tab provides category filters, command search, and copy", async ({ page }) => {
+  await boot(page);
+
+  // Send a prompt
+  await page.locator(".composer textarea").fill("Run build and test");
+  await page.locator(".composer textarea").press("Enter");
+
+  // Push several tool events (shell, file, git) with detail
+  await page.evaluate(() => {
+    const q = (window as any).qa;
+    q.agent({ kind: "tool_start", task_id: "t-1", name: "run_command", detail: "npm run build" });
+    q.agent({ kind: "tool_delta", task_id: "t-1", text: "vite v8.3.1 building client\nbuilt in 450ms" });
+    q.agent({ kind: "tool_end", task_id: "t-1", status: "completed" });
+
+    q.agent({ kind: "tool_start", task_id: "t-2", name: "inspect_file", detail: "src/App.tsx" });
+    q.agent({ kind: "tool_delta", task_id: "t-2", text: "import React from 'react';" });
+    q.agent({ kind: "tool_end", task_id: "t-2", status: "completed" });
+
+    q.agent({ kind: "tool_start", task_id: "t-3", name: "git_diff", detail: "package.json" });
+    q.agent({ kind: "tool_delta", task_id: "t-3", text: "diff --git a/package.json" });
+    q.agent({ kind: "tool_end", task_id: "t-3", status: "completed" });
+
+    q.agent({ kind: "turn_end", status: "completed", text: "Done running build." });
+  });
+
+  // Switch to Split mode to reveal SessionDashboard
+  const splitBtn = page.locator(".chat-view-header .cv-mode-toggle").getByRole("button", { name: "Split" });
+  await splitBtn.click();
+  const dashboard = page.locator(".session-dashboard");
+  await expect(dashboard).toBeVisible();
+
+  // Switch to Tools Log tab
+  const toolsTabBtn = dashboard.getByRole("tab", { name: /Tools Log/ });
+  await toolsTabBtn.click();
+
+  // Verify activity toolbar & filter pills
+  const toolbar = dashboard.locator(".sd-activity-toolbar");
+  await expect(toolbar).toBeVisible();
+  const filterPills = toolbar.locator(".sd-filter-pill");
+  await expect(filterPills.first()).toContainText("All");
+
+  // Verify tool items have category badges and command chips
+  const items = dashboard.locator(".sd-activity-item");
+  await expect(items).toHaveCount(3);
+  await expect(items.first().locator(".sd-tool-type-badge")).toContainText("CMD");
+  await expect(items.first().locator(".sd-tool-cmd-chip")).toHaveText("npm run build");
+
+  // Search filter test
+  const searchInput = dashboard.locator(".sd-activity-search-input");
+  await searchInput.fill("App.tsx");
+  await expect(items).toHaveCount(1);
+  await expect(items.first().locator(".sd-tool-cmd-chip")).toHaveText("src/App.tsx");
+  await searchInput.fill("");
+  await expect(items).toHaveCount(3);
+
+  // Expand item and check target row
+  await items.first().locator(".sd-activity-toggle-btn").click();
+  await expect(dashboard.locator(".sd-activity-target-row")).toBeVisible();
+  await expect(dashboard.locator(".sd-target-code")).toHaveText("npm run build");
+
+  // Check 1-click copy action inside activity item
+  const copyBtn = items.first().locator(".sd-copy-btn");
+  await expect(copyBtn).toBeVisible();
+  await copyBtn.click();
+  await expect(copyBtn).toContainText("Copied");
+
+  // Accessibility check on tools pane
+  const axe = await new AxeBuilder({ page }).include(".sd-activity-pane").analyze();
+  expect(axe.violations).toEqual([]);
+});

@@ -80,6 +80,8 @@ pub enum AgentEvent {
     ToolStart {
         task_id: String,
         name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
     },
     ToolPolicy {
         task_id: String,
@@ -301,6 +303,7 @@ impl Fold {
                     vec![AgentEvent::ToolStart {
                         task_id,
                         name: tool_name(&kind),
+                        detail: None,
                     }]
                 } else {
                     Vec::new()
@@ -561,6 +564,7 @@ mod tests {
             vec![AgentEvent::ToolStart {
                 task_id: "t1".to_owned(),
                 name: "powershell".to_owned(),
+                detail: None,
             }]
         );
         assert!(fold.fold_line(SCHEDULED_LINE).is_empty());

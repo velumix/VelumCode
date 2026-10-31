@@ -30,6 +30,43 @@ fn bounded(value: &str) -> String {
 fn error(value: &Value) -> Option<String> {
     (!value.is_null()).then(|| bounded(value.as_str().unwrap_or(&value.to_string())))
 }
+fn extract_antigravity_detail(tool_name: &Value, step: &Value, info: &Value) -> Option<String> {
+    let name = tool_name.as_str().unwrap_or_default();
+    let params = if info["parameters"].is_object() {
+        &info["parameters"]
+    } else if step["parameters"].is_object() {
+        &step["parameters"]
+    } else if step["args"].is_object() {
+        &step["args"]
+    } else {
+        return None;
+    };
+    match name {
+        "run_command" | "execute_command" | "powershell" | "bash" | "sh" | "cmd" => params
+            .get("CommandLine")
+            .or_else(|| params.get("command"))
+            .or_else(|| params.get("toolSummary"))
+            .and_then(Value::as_str)
+            .map(|s| bounded(s.trim())),
+        "read_file" | "write_file" | "edit_file" | "inspect_file" | "delete_file" => params
+            .get("Path")
+            .or_else(|| params.get("path"))
+            .and_then(Value::as_str)
+            .map(|s| bounded(s.trim())),
+        "search_web" | "web_search" | "workspace_search" | "vault_search" | "search" => params
+            .get("query")
+            .or_else(|| params.get("q"))
+            .and_then(Value::as_str)
+            .map(|s| bounded(s.trim())),
+        _ => params
+            .get("toolSummary")
+            .or_else(|| params.get("Path"))
+            .or_else(|| params.get("query"))
+            .or_else(|| params.get("CommandLine"))
+            .and_then(Value::as_str)
+            .map(|s| bounded(s.trim())),
+    }
+}
 fn end(status: &str, response: Option<String>, reason: Option<String>) -> Event {
     Event::TurnEnd {
         status: status.into(),
@@ -182,6 +219,12 @@ impl Stream {
                 }
                 let mut events = vec![];
                 if self.tools.insert(id.clone()) {
+                    let detail = match kind {
+                        "command_execution" => text(item, "command"),
+                        "web_search" => text(item, "query"),
+                        "mcp_tool_call" => text(item, "tool"),
+                        _ => String::new(),
+                    };
                     events.push(Event::ToolStart {
                         task_id: id.clone(),
                         name: match kind {
@@ -191,13 +234,8 @@ impl Stream {
                             _ => "MCP tool",
                         }
                         .into(),
+                        detail: if detail.is_empty() { None } else { Some(detail.clone()) },
                     });
-                    let detail = match kind {
-                        "command_execution" => text(item, "command"),
-                        "web_search" => text(item, "query"),
-                        "mcp_tool_call" => text(item, "tool"),
-                        _ => String::new(),
-                    };
                     if !detail.is_empty() {
                         events.push(Event::ToolDelta {
                             task_id: id.clone(),
@@ -350,9 +388,11 @@ impl Stream {
                 };
                 let id = format!("agy-{index}");
                 if self.tools.insert(id.clone()) {
+                    let detail = extract_antigravity_detail(&step["tool_name"], step, &step["tool_info"]);
                     events.push(Event::ToolStart {
                         task_id: id.clone(),
                         name: text(step, "tool_name"),
+                        detail,
                     });
                 }
                 let info = &step["tool_info"];

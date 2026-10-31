@@ -5,7 +5,7 @@ import BotAvatar from "./BotAvatar";
 import type { BotIdentity } from "../bots";
 import { providerNames, type Provider, type RunOptions } from "../providers";
 import type { UsageSnapshot } from "../usage";
-import { friendlyTool } from "../conversationUX";
+import { extractToolSnippet, fmtToolDuration, friendlyTool, toolCategory } from "../conversationUX";
 import { copyText } from "./clip";
 import {
   describeFile,
@@ -35,10 +35,12 @@ export interface ToolActionSummary {
   id: number;
   taskId: string;
   name: string;
+  detail?: string;
   status: string;
   output: string;
   result?: string;
   reason?: string;
+  durationMs?: number;
 }
 
 export interface SessionDashboardProps {
@@ -91,7 +93,10 @@ export default function SessionDashboard({
   const [diffTruncated, setDiffTruncated] = useState(false);
   const [diffSearch, setDiffSearch] = useState("");
   const [copiedDiff, setCopiedDiff] = useState(false);
-  const [expandedToolId, setExpandedToolId] = useState<number | null>(null);
+  const [expandedToolIds, setExpandedToolIds] = useState<Set<number>>(new Set());
+  const [toolSearch, setToolSearch] = useState("");
+  const [toolCategoryFilter, setToolCategoryFilter] = useState<"all" | "shell" | "file" | "search" | "git" | "error">("all");
+  const [copiedToolId, setCopiedToolId] = useState<number | null>(null);
   const requestSeq = useRef(0);
   const diffRequestSeq = useRef(0);
 
@@ -191,17 +196,79 @@ export default function SessionDashboard({
   // Extract tools from blocks
   const toolActions = useMemo<ToolActionSummary[]>(() => {
     return blocks
-      .filter((b): b is { id: number; kind: "tool"; taskId: string; name: string; status: string; output: string; result?: string; reason?: string } => b.kind === "tool")
+      .filter((b): b is { id: number; kind: "tool"; taskId: string; name: string; detail?: string; status: string; output: string; result?: string; reason?: string; durationMs?: number } => b.kind === "tool")
       .map((b) => ({
         id: b.id,
         taskId: b.taskId,
         name: b.name,
+        detail: b.detail || extractToolSnippet(b.name, b.output, b.result),
         status: b.status,
         output: b.output,
         result: b.result,
         reason: b.reason,
+        durationMs: b.durationMs,
       }));
   }, [blocks]);
+
+  const toolStats = useMemo(() => {
+    let cmdCount = 0;
+    let fileCount = 0;
+    let searchCount = 0;
+    let gitCount = 0;
+    let errorCount = 0;
+    for (const t of toolActions) {
+      const cat = toolCategory(t.name);
+      if (cat === "shell") cmdCount++;
+      else if (cat === "git") gitCount++;
+      else if (cat === "file") fileCount++;
+      else if (cat === "search") searchCount++;
+      if (t.status === "failed" || t.status === "blocked" || t.status === "rejected" || !!t.reason) {
+        errorCount++;
+      }
+    }
+    return { cmdCount, fileCount, searchCount, gitCount, errorCount, total: toolActions.length };
+  }, [toolActions]);
+
+  const filteredTools = useMemo(() => {
+    const q = toolSearch.trim().toLowerCase();
+    return toolActions.filter((tool) => {
+      const cat = toolCategory(tool.name);
+      const isError = tool.status === "failed" || tool.status === "blocked" || tool.status === "rejected" || !!tool.reason;
+
+      if (toolCategoryFilter === "shell" && cat !== "shell") return false;
+      if (toolCategoryFilter === "git" && cat !== "git") return false;
+      if (toolCategoryFilter === "file" && cat !== "file") return false;
+      if (toolCategoryFilter === "search" && cat !== "search") return false;
+      if (toolCategoryFilter === "error" && !isError) return false;
+
+      if (q) {
+        const matchName = tool.name.toLowerCase().includes(q) || friendlyTool(tool.name).toLowerCase().includes(q);
+        const matchDetail = tool.detail?.toLowerCase().includes(q);
+        const matchOutput = tool.output?.toLowerCase().includes(q);
+        const matchResult = tool.result?.toLowerCase().includes(q);
+        const matchReason = tool.reason?.toLowerCase().includes(q);
+        return Boolean(matchName || matchDetail || matchOutput || matchResult || matchReason);
+      }
+      return true;
+    });
+  }, [toolActions, toolCategoryFilter, toolSearch]);
+
+  const toggleExpanded = useCallback((id: number) => {
+    setExpandedToolIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const expandAllTools = useCallback(() => {
+    setExpandedToolIds(new Set(toolActions.map((t) => t.id)));
+  }, [toolActions]);
+
+  const collapseAllTools = useCallback(() => {
+    setExpandedToolIds(new Set());
+  }, []);
 
   const completedTodos = useMemo(() => todos.filter((t) => t.status === "completed"), [todos]);
   const progressPercent = todos.length > 0 ? Math.round((completedTodos.length / todos.length) * 100) : 0;
@@ -544,40 +611,256 @@ export default function SessionDashboard({
                 <p>When the agent searches, edits files, or executes shell commands, a full audit trail appears here.</p>
               </div>
             ) : (
-              toolActions.map((tool) => {
-                const open = expandedToolId === tool.id;
-                const body = [tool.reason ? `Reason: ${tool.reason}` : "", tool.output, tool.result].filter(Boolean).join("\n");
-                return (
-                  <div key={tool.id} className="sd-activity-item">
-                    <button
-                      type="button"
-                      className="sd-activity-head"
-                      aria-expanded={open}
-                      onClick={() => setExpandedToolId(open ? null : tool.id)}
-                    >
-                      <div className="sd-activity-title">
-                        <Icon
-                          name={tool.status === "completed" ? "check" : tool.status === "running" ? "terminal" : "shield"}
-                          size={13}
-                          style={{
-                            color:
-                              tool.status === "completed"
-                                ? "var(--ok)"
-                                : tool.status === "running"
-                                ? "var(--accent)"
-                                : "var(--danger)",
-                          }}
-                        />
-                        <span>{friendlyTool(tool.name)}</span>
-                      </div>
-                      <span style={{ fontSize: "10px", color: "var(--muted)" }}>
-                        {tool.status} {open ? "▾" : "▸"}
-                      </span>
-                    </button>
-                    {open && (body ? <pre className="sd-activity-out">{body}</pre> : <div className="sd-activity-out" style={{ color: "var(--muted)", fontStyle: "italic" }}>No text output recorded.</div>)}
+              <>
+                <div className="sd-activity-toolbar">
+                  <div className="sd-activity-search-wrap">
+                    <Icon name="search" size={13} />
+                    <input
+                      type="text"
+                      className="sd-activity-search-input"
+                      placeholder="Filter by command, file, query, or output…"
+                      value={toolSearch}
+                      onChange={(e) => setToolSearch(e.target.value)}
+                    />
+                    {toolSearch && (
+                      <button
+                        type="button"
+                        className="sd-search-clear-btn"
+                        onClick={() => setToolSearch("")}
+                        aria-label="Clear tool search"
+                      >
+                        ✕
+                      </button>
+                    )}
                   </div>
-                );
-              })
+
+                  <div className="sd-activity-actions-row">
+                    <div className="sd-activity-filters" role="tablist" aria-label="Tool category filters">
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={toolCategoryFilter === "all"}
+                        className={`sd-filter-pill${toolCategoryFilter === "all" ? " active" : ""}`}
+                        onClick={() => setToolCategoryFilter("all")}
+                      >
+                        All <span className="sd-pill-count">{toolStats.total}</span>
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={toolCategoryFilter === "shell"}
+                        className={`sd-filter-pill${toolCategoryFilter === "shell" ? " active" : ""}`}
+                        onClick={() => setToolCategoryFilter("shell")}
+                      >
+                        Commands <span className="sd-pill-count">{toolStats.cmdCount}</span>
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={toolCategoryFilter === "file"}
+                        className={`sd-filter-pill${toolCategoryFilter === "file" ? " active" : ""}`}
+                        onClick={() => setToolCategoryFilter("file")}
+                      >
+                        Files <span className="sd-pill-count">{toolStats.fileCount}</span>
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={toolCategoryFilter === "search"}
+                        className={`sd-filter-pill${toolCategoryFilter === "search" ? " active" : ""}`}
+                        onClick={() => setToolCategoryFilter("search")}
+                      >
+                        Search <span className="sd-pill-count">{toolStats.searchCount}</span>
+                      </button>
+                      {toolStats.gitCount > 0 && (
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={toolCategoryFilter === "git"}
+                          className={`sd-filter-pill${toolCategoryFilter === "git" ? " active" : ""}`}
+                          onClick={() => setToolCategoryFilter("git")}
+                        >
+                          Git <span className="sd-pill-count">{toolStats.gitCount}</span>
+                        </button>
+                      )}
+                      {toolStats.errorCount > 0 && (
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={toolCategoryFilter === "error"}
+                          className={`sd-filter-pill error-filter${toolCategoryFilter === "error" ? " active" : ""}`}
+                          onClick={() => setToolCategoryFilter("error")}
+                        >
+                          Errors <span className="sd-pill-count">{toolStats.errorCount}</span>
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="sd-view-toggle-btns">
+                      <button
+                        type="button"
+                        className="sd-action-chip"
+                        onClick={expandAllTools}
+                        title="Expand all tool events"
+                      >
+                        Expand All
+                      </button>
+                      <button
+                        type="button"
+                        className="sd-action-chip"
+                        onClick={collapseAllTools}
+                        title="Collapse all tool events"
+                      >
+                        Collapse All
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="sd-activity-list">
+                  {filteredTools.length === 0 ? (
+                    <div className="sd-activity-none">
+                      <span>No actions match the current filter or search criteria.</span>
+                    </div>
+                  ) : (
+                    filteredTools.map((tool) => {
+                      const open = expandedToolIds.has(tool.id);
+                      const cat = toolCategory(tool.name);
+                      const isError = tool.status === "failed" || tool.status === "blocked" || tool.status === "rejected" || !!tool.reason;
+                      const isBusy = tool.status === "running";
+                      const body = [tool.reason ? `Error / Reason: ${tool.reason}` : "", tool.output, tool.result].filter(Boolean).join("\n");
+                      const snippet = tool.detail;
+                      
+                      let previewText = "";
+                      if (!open) {
+                        const raw = (tool.output || tool.result || "").trim();
+                        if (raw) {
+                          const lines = raw.split("\n").map(l => l.trim()).filter(Boolean);
+                          if (lines.length > 0) {
+                            previewText = lines[0].slice(0, 140);
+                          }
+                        }
+                      }
+
+                      return (
+                        <div key={tool.id} className={`sd-activity-item ${cat}${isError ? " is-error" : ""}${isBusy ? " is-busy" : ""}`}>
+                          <div className="sd-activity-head">
+                            <button
+                              type="button"
+                              className="sd-activity-toggle-btn"
+                              aria-expanded={open}
+                              onClick={() => toggleExpanded(tool.id)}
+                            >
+                              <div className="sd-activity-title">
+                                <span className={`sd-tool-dot ${isError ? "bad" : isBusy ? "busy" : "ok"}`}>
+                                  <Icon
+                                    name={isError ? "shield" : isBusy ? "terminal" : "check"}
+                                    size={12}
+                                  />
+                                </span>
+                                <span className={`sd-tool-type-badge cat-${cat}`}>
+                                  {cat === "shell" ? "CMD" : cat.toUpperCase()}
+                                </span>
+                                {snippet ? (
+                                  <code className="sd-tool-cmd-chip" title={snippet}>
+                                    {snippet}
+                                  </code>
+                                ) : null}
+                                <span className="sd-tool-name-sub">
+                                  {friendlyTool(tool.name)}
+                                </span>
+                              </div>
+                              <span className="sd-caret-indicator" aria-hidden="true">
+                                {open ? "▾" : "▸"}
+                              </span>
+                            </button>
+
+                            <div className="sd-activity-meta-actions">
+                              {tool.durationMs != null && (
+                                <span className="sd-tool-duration" title={`Execution time: ${fmtToolDuration(tool.durationMs)}`}>
+                                  {fmtToolDuration(tool.durationMs)}
+                                </span>
+                              )}
+                              {body ? (
+                                <button
+                                  type="button"
+                                  className={`sd-action-chip sd-copy-btn${copiedToolId === tool.id ? " copied" : ""}`}
+                                  title="Copy output to clipboard"
+                                  onClick={async () => {
+                                    await copyText(body);
+                                    setCopiedToolId(tool.id);
+                                    setTimeout(() => setCopiedToolId(null), 1500);
+                                  }}
+                                >
+                                  <Icon name={copiedToolId === tool.id ? "check" : "copy"} size={11} />
+                                  <span>{copiedToolId === tool.id ? "Copied" : "Copy"}</span>
+                                </button>
+                              ) : null}
+                              {onInsertDraft && body ? (
+                                <button
+                                  type="button"
+                                  className="sd-action-chip sd-ask-btn"
+                                  title="Insert output into prompt composer"
+                                  onClick={() => {
+                                    const prompt = `Regarding the output from \`${tool.detail || tool.name}\`:\n\`\`\`\n${body.slice(0, 1500)}\n\`\`\``;
+                                    onInsertDraft(prompt);
+                                  }}
+                                >
+                                  <Icon name="chat" size={11} />
+                                  <span>Ask</span>
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+
+                          {!open && previewText && (
+                            <button
+                              type="button"
+                              className="sd-activity-preview"
+                              onClick={() => toggleExpanded(tool.id)}
+                              title="Click to view full output"
+                            >
+                              <code>{previewText}</code>
+                            </button>
+                          )}
+
+                          {open && (
+                            <div className="sd-activity-body">
+                              {tool.detail && (
+                                <div className="sd-activity-target-row">
+                                  <span className="sd-meta-tag">Command / Target</span>
+                                  <code className="sd-target-code">{tool.detail}</code>
+                                  <button
+                                    type="button"
+                                    className="sd-mini-copy"
+                                    title="Copy target"
+                                    onClick={() => copyText(tool.detail!)}
+                                  >
+                                    <Icon name="copy" size={11} />
+                                  </button>
+                                </div>
+                              )}
+                              {tool.reason && (
+                                <div className="sd-activity-reason">
+                                  <Icon name="shield" size={13} />
+                                  <span>{tool.reason}</span>
+                                </div>
+                              )}
+                              {body ? (
+                                <pre className="sd-activity-out">{body}</pre>
+                              ) : (
+                                <div className="sd-activity-empty-out">
+                                  {isBusy ? "Executing command in workspace…" : "No text output recorded."}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </>
             )}
           </div>
         )}

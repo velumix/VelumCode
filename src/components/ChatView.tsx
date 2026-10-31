@@ -17,7 +17,7 @@ import CorrectionComposer from './CorrectionComposer';
 import RequestRecovery from './RequestRecovery';
 import InteractionPanel, { PermissionRecord } from './InteractionPanel';
 import { emptyInteractions, mergeInteractionResponse, type InteractionSnapshot } from '../interactions';
-import { correctionPrompt, filterSlashCommands, friendlyTool, groupActivity, lastMatch, latestRecovery, lessonTitle, projectName, recoverableRequest, type RecoverableRequest, type SlashCommand } from '../conversationUX';
+import { correctionPrompt, extractToolSnippet, filterSlashCommands, fmtToolDuration, friendlyTool, groupActivity, lastMatch, latestRecovery, lessonTitle, projectName, recoverableRequest, type RecoverableRequest, type SlashCommand } from '../conversationUX';
 import type { MemoryView } from '../memory';
 import { emptyQueue, type MessageQueue as Queue } from '../messageQueue';
 import ProviderWait from './ProviderWait';
@@ -44,6 +44,7 @@ type Block =
       kind: "tool";
       taskId: string;
       name: string;
+      detail?: string;
       status: string;
       policy?: string;
       output: string;
@@ -224,13 +225,6 @@ function fmtElapsed(ms: number): string {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-function fmtToolDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  const s = ms / 1000;
-  if (s < 10) return `${s.toFixed(1)}s`;
-  return fmtElapsed(ms);
-}
-
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -283,6 +277,7 @@ function ToolBlock({ block }: { block: Extract<Block, { kind: "tool" }> }) {
   const tone = statusTone(block.status);
   const body = [block.output, block.result].filter((s) => s && s.length > 0).join("\n");
   const { head, rest } = preview(body || (block.status === "running" ? "…" : ""));
+  const detail = block.detail || extractToolSnippet(block.name, block.output, block.result);
   return (
     <div className={`tool-card ${tone}`}>
       <button type="button" className="tool-head" onClick={() => setOverride(!open)} aria-expanded={open}>
@@ -290,6 +285,11 @@ function ToolBlock({ block }: { block: Extract<Block, { kind: "tool" }> }) {
         <span className="tool-name" title={block.name}>
           {friendlyTool(block.name)}
         </span>
+        {detail && (
+          <code className="tool-target-pill" title={detail}>
+            {detail}
+          </code>
+        )}
         {block.durationMs != null && (
           <span className="tool-duration" title={`Execution duration: ${fmtToolDuration(block.durationMs)}`}>
             {fmtToolDuration(block.durationMs)}
@@ -674,17 +674,19 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
         case "tool_start": {
           const taskId = asString(e.task_id);
           const name = asString(e.name) ?? "tool";
+          const detail = asString((e as any).detail);
           if (!taskId) break;
           if (runningRef.current) {
             setProviderProgress(null);
-            setActivity(`Running ${name}…`);
-            setStatus({ kind: 'running', detail: `Running ${name}…` });
+            const liveMsg = detail ? `${friendlyTool(name)}: ${detail}` : `Running ${friendlyTool(name)}…`;
+            setActivity(liveMsg);
+            setStatus({ kind: 'running', detail: liveMsg });
           }
           setBlocks((prev) => {
             if (prev.some((b) => b.kind === "tool" && b.taskId === taskId)) return prev;
             return [
               ...prev,
-              { id: ++idRef.current, kind: "tool", taskId, name, status: "running", output: "", startedAt: Date.now() },
+              { id: ++idRef.current, kind: "tool", taskId, name, detail, status: "running", output: "", startedAt: Date.now() },
             ];
           });
           break;
@@ -1138,11 +1140,17 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
               if (row.kind === 'activity_group') {
                 const tools = row.items.filter((item): item is Extract<Block,{kind:'tool'}> => item.kind === 'tool');
                 const current = lastMatch(tools,tool=>statusTone(tool.status)==='busy');
+                const currentDetail = current?.detail || (current ? extractToolSnippet(current.name, current.output, current.result) : undefined);
+                const currentSummary = current
+                  ? currentDetail
+                    ? `${friendlyTool(current.name)}: ${currentDetail}`
+                    : `${friendlyTool(current.name)} in progress`
+                  : '';
                 return (
                   <AgentActivity
                     key={`activity-${row.id}`}
                     count={tools.length}
-                    current={current ? `${friendlyTool(current.name)} in progress` : ''}
+                    current={currentSummary}
                     failed={tools.some(tool=>['failed','blocked','rejected'].includes(tool.status))}
                     stopped={tools.some(tool=>tool.status==='cancelled')}
                     busy={!!current}

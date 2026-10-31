@@ -218,6 +218,7 @@ impl View {
                     out.push(AgentEvent::ToolStart {
                         task_id: item_id.clone(),
                         name,
+                        detail: None,
                     });
                 }
                 let output = item
@@ -256,6 +257,7 @@ impl View {
                         } else {
                             command.clone()
                         },
+                        detail: if command.is_empty() { None } else { Some(command.clone()) },
                     });
                 }
                 let output = item
@@ -330,6 +332,7 @@ impl View {
                     out.push(AgentEvent::ToolStart {
                         task_id: item_id.clone(),
                         name: "subagent".to_owned(),
+                        detail: None,
                     });
                 }
                 if terminal || is_terminal_status(&status) {
@@ -454,6 +457,7 @@ impl View {
                     AgentEvent::ToolStart {
                         task_id: item_id.clone(),
                         name,
+                        detail: None,
                     },
                     AgentEvent::ToolDelta {
                         task_id: item_id,

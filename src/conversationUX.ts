@@ -98,6 +98,72 @@ export function friendlyTool(name: string): string {
   return FRIENDLY_TOOLS[name] ?? name;
 }
 
+export function extractToolSnippet(name: string, output?: string, result?: string, detail?: string): string | undefined {
+  if (detail && detail.trim()) {
+    return detail.trim().slice(0, 90);
+  }
+  if (name && (name.includes(" ") || name.includes("/") || name.includes("\\") || name.startsWith("git ") || name.startsWith("npm ") || name.startsWith("cargo "))) {
+    return name.slice(0, 90);
+  }
+  const text = (output || result || "").trim();
+  if (!text) return undefined;
+
+  const cmdMatch = text.match(/(?:CommandLine|Command|command):\s*(?:['"`])?([^\r\n'"`]+)/i);
+  if (cmdMatch) return cmdMatch[1].trim().slice(0, 90);
+
+  const pathMatch = text.match(/(?:Path|File|path|file):\s*(?:['"`])?([^\r\n'"`]+)/i);
+  if (pathMatch) return pathMatch[1].trim().slice(0, 90);
+
+  const promptMatch = text.match(/^[>$#]\s+([^\r\n]+)/m);
+  if (promptMatch) return promptMatch[1].trim().slice(0, 90);
+
+  const queryMatch = text.match(/(?:Query|query|Search):\s*(?:['"`])?([^\r\n'"`]+)/i);
+  if (queryMatch) return queryMatch[1].trim().slice(0, 90);
+
+  const diffMatch = text.match(/diff --git a\/([^\s]+)/);
+  if (diffMatch) return diffMatch[1];
+
+  const firstLine = text.split("\n")[0].trim();
+  if (
+    firstLine.length > 0 &&
+    firstLine.length < 60 &&
+    !firstLine.startsWith("{") &&
+    !firstLine.startsWith("[") &&
+    (firstLine.includes(".") || firstLine.includes("/") || firstLine.includes("\\"))
+  ) {
+    return firstLine;
+  }
+
+  return undefined;
+}
+
+export function toolCategory(name: string): "shell" | "file" | "search" | "git" | "mcp" {
+  const n = (name || "").toLowerCase();
+  if (n.includes("powershell") || n.includes("bash") || n.includes("shell") || n.includes("cmd") || n.includes("run_command") || n.includes("execute_command")) {
+    return "shell";
+  }
+  if (n.includes("git_") || n.includes("diff") || n.startsWith("git ")) {
+    return "git";
+  }
+  if (n.includes("read") || n.includes("write") || n.includes("edit") || n.includes("file") || n.includes("inspect")) {
+    return "file";
+  }
+  if (n.includes("search") || n.includes("vault") || n.includes("fetch")) {
+    return "search";
+  }
+  return "mcp";
+}
+
+export function fmtToolDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = ms / 1000;
+  if (s < 10) return `${s.toFixed(1)}s`;
+  const totalSec = Math.floor(s);
+  const m = Math.floor(totalSec / 60);
+  const remSec = totalSec % 60;
+  return m > 0 ? `${m}m ${remSec}s` : `${remSec}s`;
+}
+
 export interface SlashCommand {
   command: string;
   label: string;
