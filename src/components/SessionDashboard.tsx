@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import Icon from "./Icon";
+import Icon, { VelumMark } from "./Icon";
 import BotAvatar from "./BotAvatar";
 import type { BotIdentity } from "../bots";
 import { providerNames, type Provider, type RunOptions } from "../providers";
@@ -14,6 +14,7 @@ import {
 } from "./gitStatus";
 import { DiffLines } from "./diffViewer";
 import GitHubHub from "./GitHubHub";
+import { taskBlockers, isOverdue, type Board, type Card, type Column } from "../kanban";
 import "./SessionDashboard.css";
 import "./GitPanel.css";
 
@@ -97,8 +98,55 @@ export default function SessionDashboard({
   const [toolSearch, setToolSearch] = useState("");
   const [toolCategoryFilter, setToolCategoryFilter] = useState<"all" | "shell" | "file" | "search" | "git" | "error">("all");
   const [copiedToolId, setCopiedToolId] = useState<number | null>(null);
+  const [board, setBoard] = useState<Board | null>(null);
+  const [loadingBoard, setLoadingBoard] = useState(false);
+  const [taskSectionFilter, setTaskSectionFilter] = useState<"all" | "plan" | "kanban">("all");
   const requestSeq = useRef(0);
   const diffRequestSeq = useRef(0);
+
+  const loadBoard = useCallback(async () => {
+    if (!workspace) {
+      setBoard(null);
+      return;
+    }
+    setLoadingBoard(true);
+    try {
+      const b = await invoke<Board>("kanban_request", { workspace, request: { action: "load" } });
+      setBoard(b);
+    } catch {
+      setBoard(null);
+    } finally {
+      setLoadingBoard(false);
+    }
+  }, [workspace]);
+
+  useEffect(() => {
+    if (activeTab === "tasks") {
+      void loadBoard();
+    }
+  }, [activeTab, loadBoard]);
+
+  const moveCard = useCallback(async (card: Card, column: Column) => {
+    if (!workspace || !board || card.column === column) return;
+    try {
+      const nextBoard = await invoke<Board>("kanban_request", {
+        workspace,
+        request: { action: "move", revision: board.revision, id: card.id, column, before: null },
+      });
+      setBoard(nextBoard);
+    } catch {}
+  }, [workspace, board]);
+
+  const sortedCards = useMemo(() => {
+    if (!board?.cards) return [];
+    const colOrder: Record<Column, number> = { progress: 0, review: 1, backlog: 2, done: 3 };
+    const prioOrder = { high: 0, normal: 1, low: 2 };
+    return [...board.cards].sort((a, b) => {
+      const colDiff = (colOrder[a.column] ?? 4) - (colOrder[b.column] ?? 4);
+      if (colDiff !== 0) return colDiff;
+      return (prioOrder[a.priority] ?? 1) - (prioOrder[b.priority] ?? 1);
+    });
+  }, [board?.cards]);
 
   useEffect(() => {
     if (requestedTab) {
@@ -280,7 +328,7 @@ export default function SessionDashboard({
           {bot ? (
             <BotAvatar bot={bot} size={28} status={running ? "working" : "idle"} />
           ) : (
-            <Icon name="sparkles" size={20} style={{ color: "var(--accent)" }} />
+            <VelumMark size={28} status={running ? "working" : "idle"} />
           )}
           <div className="sd-title">
             <strong>
@@ -343,8 +391,10 @@ export default function SessionDashboard({
         >
           <Icon name="board" size={13} />
           <span>Tasks & Plan</span>
-          {todos.length > 0 && (
-            <span className="sd-badge">{completedTodos.length}/{todos.length}</span>
+          {(todos.length > 0 || (board && board.cards.length > 0)) && (
+            <span className="sd-badge">
+              {todos.length > 0 ? `${completedTodos.length}/${todos.length}` : board?.cards.length}
+            </span>
           )}
         </button>
 
@@ -548,43 +598,229 @@ export default function SessionDashboard({
         {/* Tab 2: Tasks & Plan */}
         {activeTab === "tasks" && (
           <div className="sd-tasks-pane">
-            <div className="sd-task-progress-card">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <strong>Plan Progress</strong>
-                <span style={{ fontSize: "11px", color: "var(--muted)" }}>
-                  {completedTodos.length} of {todos.length} done ({progressPercent}%)
-                </span>
+            {/* Toolbar with Segmented Controls & Quick Action */}
+            <div className="sd-tasks-toolbar">
+              <div className="sd-tasks-filters" role="tablist" aria-label="Tasks view filter">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={taskSectionFilter === "all"}
+                  className={`sd-tasks-filter-btn${taskSectionFilter === "all" ? " active" : ""}`}
+                  onClick={() => setTaskSectionFilter("all")}
+                >
+                  All ({todos.length + (board?.cards?.length || 0)})
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={taskSectionFilter === "plan"}
+                  className={`sd-tasks-filter-btn${taskSectionFilter === "plan" ? " active" : ""}`}
+                  onClick={() => setTaskSectionFilter("plan")}
+                >
+                  Plan Steps ({todos.length})
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={taskSectionFilter === "kanban"}
+                  className={`sd-tasks-filter-btn${taskSectionFilter === "kanban" ? " active" : ""}`}
+                  onClick={() => setTaskSectionFilter("kanban")}
+                >
+                  Kanban Cards ({board?.cards?.length || 0})
+                </button>
               </div>
-              <div className="sd-progress-bar-track">
-                <div
-                  className="sd-progress-bar-fill"
-                  style={{ width: `${progressPercent}%` }}
-                />
+
+              <div className="sd-tasks-actions">
+                <button
+                  type="button"
+                  className="sd-open-kanban-btn"
+                  title="Open full interactive Kanban board"
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent("velum:open-kanban", { detail: { workspace } }));
+                  }}
+                >
+                  <Icon name="board" size={12} />
+                  <span>Open Kanban</span>
+                </button>
+                <button
+                  type="button"
+                  className="sd-icon-btn"
+                  title="Refresh tasks & board"
+                  aria-label="Refresh tasks and board"
+                  disabled={loadingBoard}
+                  onClick={() => void loadBoard()}
+                >
+                  <Icon name="reset" size={13} />
+                </button>
               </div>
             </div>
 
-            {todos.length === 0 ? (
-              <div className="sd-empty-state">
-                <Icon name="board" size={24} />
-                <strong>No active tasks in this conversation</strong>
-                <p>When the LLM formulates a plan or writes todos, they will stream here in real time.</p>
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                {todos.map((todo, idx) => (
-                  <div key={idx} className={`sd-task-item ${todo.status}`}>
-                    <span className={`sd-task-dot ${todo.status}`}>
-                      <Icon
-                        name={todo.status === "completed" ? "check" : todo.status === "in_progress" ? "sparkles" : "plus"}
-                        size={14}
-                      />
+            {/* Section 1: Conversation Plan */}
+            {(taskSectionFilter === "all" || taskSectionFilter === "plan") && (
+              <div className="sd-plan-section">
+                <div className="sd-section-header">
+                  <strong>Conversation Plan Steps</strong>
+                  {todos.length > 0 && (
+                    <span className="sd-section-count">
+                      {completedTodos.length} of {todos.length} done ({progressPercent}%)
                     </span>
-                    <span className="sd-task-text">{todo.text}</span>
+                  )}
+                </div>
+
+                {todos.length > 0 && (
+                  <div className="sd-progress-bar-track">
+                    <div className="sd-progress-bar-fill" style={{ width: `${progressPercent}%` }} />
                   </div>
-                ))}
+                )}
+
+                {todos.length === 0 ? (
+                  <div className="sd-section-empty">
+                    <Icon name="check" size={15} />
+                    <span>No active turn todos. When the bot plans steps, they stream here.</span>
+                  </div>
+                ) : (
+                  <div className="sd-todos-list">
+                    {todos.map((todo, idx) => (
+                      <div key={idx} className={`sd-task-item ${todo.status}`}>
+                        <span className={`sd-task-dot ${todo.status}`}>
+                          <Icon
+                            name={todo.status === "completed" ? "check" : todo.status === "in_progress" ? "sparkles" : "plus"}
+                            size={14}
+                          />
+                        </span>
+                        <span className="sd-task-text">{todo.text}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
+            {/* Section 2: Workspace Kanban Cards */}
+            {(taskSectionFilter === "all" || taskSectionFilter === "kanban") && (
+              <div className="sd-kanban-section">
+                <div className="sd-section-header">
+                  <strong>Workspace Kanban Tasks</strong>
+                  {board?.cards && (
+                    <span className="sd-section-count">
+                      {board.cards.length} {board.cards.length === 1 ? "task" : "tasks"}
+                    </span>
+                  )}
+                </div>
+
+                {loadingBoard && !board ? (
+                  <div className="sd-section-empty">Loading Kanban cards…</div>
+                ) : !board || sortedCards.length === 0 ? (
+                  <div className="sd-section-empty">
+                    <Icon name="board" size={16} />
+                    <span>No cards on this workspace board yet. Click "Open Kanban" to add one.</span>
+                  </div>
+                ) : (
+                  <div className="sd-kanban-cards-list">
+                    {sortedCards.map((card) => {
+                      const blockers = taskBlockers(card, board.cards);
+                      const overdue = isOverdue(card);
+                      return (
+                        <div key={card.id} className={`sd-kanban-card col-${card.column}`}>
+                          <div className="sd-kanban-card-top">
+                            <div className="sd-kanban-badges">
+                              <span className={`sd-kanban-col-pill col-${card.column}`}>
+                                {card.column === "progress"
+                                  ? "In Progress"
+                                  : card.column === "review"
+                                  ? "Review"
+                                  : card.column === "done"
+                                  ? "Done"
+                                  : "Backlog"}
+                              </span>
+                              {card.priority && card.priority !== "normal" && (
+                                <span className={`sd-kanban-prio-pill prio-${card.priority}`}>
+                                  {card.priority.toUpperCase()}
+                                </span>
+                              )}
+                              {overdue && <span className="sd-overdue-tag">Overdue</span>}
+                              {blockers.length > 0 && (
+                                <span className="sd-blocker-tag" title={`Blocked by: ${blockers.join(", ")}`}>
+                                  Blocked
+                                </span>
+                              )}
+                            </div>
+
+                            {onInsertDraft && (
+                              <button
+                                type="button"
+                                className="sd-kanban-work-btn"
+                                title="Load this task into chat prompt composer"
+                                onClick={() => {
+                                  const prompt = `Let's work on this task from our Kanban board:\n\n**${card.title}**\n${card.description ? `${card.description}\n` : ""}\nReview current code, verify requirements, and begin implementation.`;
+                                  onInsertDraft(prompt);
+                                }}
+                              >
+                                <Icon name="chat" size={11} />
+                                <span>Work on this</span>
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="sd-kanban-card-title">{card.title}</div>
+                          {card.description && (
+                            <div className="sd-kanban-card-desc">{card.description}</div>
+                          )}
+
+                          <div className="sd-kanban-card-footer">
+                            <span className="sd-kanban-move-label">Move:</span>
+                            <div className="sd-kanban-move-actions">
+                              {card.column !== "backlog" && (
+                                <button
+                                  type="button"
+                                  className="sd-kanban-shift-btn"
+                                  onClick={() => void moveCard(card, "backlog")}
+                                  title="Move to Backlog"
+                                >
+                                  Backlog
+                                </button>
+                              )}
+                              {card.column !== "progress" && (
+                                <button
+                                  type="button"
+                                  className="sd-kanban-shift-btn"
+                                  onClick={() => void moveCard(card, "progress")}
+                                  title="Move to In Progress"
+                                >
+                                  In Progress
+                                </button>
+                              )}
+                              {card.column !== "review" && (
+                                <button
+                                  type="button"
+                                  className="sd-kanban-shift-btn"
+                                  onClick={() => void moveCard(card, "review")}
+                                  title="Move to Review"
+                                >
+                                  Review
+                                </button>
+                              )}
+                              {card.column !== "done" && (
+                                <button
+                                  type="button"
+                                  className="sd-kanban-shift-btn done"
+                                  onClick={() => void moveCard(card, "done")}
+                                  title="Mark as Done"
+                                >
+                                  ✓ Done
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Section 3: Active Memory & Guidance */}
             {memoryUsage && memoryUsage.titles.length > 0 && (
               <div className="sd-memory-card">
                 <strong>Active Memory & Guidance ({memoryUsage.titles.length})</strong>

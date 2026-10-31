@@ -114,6 +114,12 @@ function MdPre({ children }: { children?: ReactNode }) {
       window.setTimeout(() => setCopied(false), 1200);
     });
   }, [children]);
+
+  const insert = useCallback(() => {
+    const text = textOf(children).replace(/\n$/, "");
+    window.dispatchEvent(new CustomEvent("velum:insert-draft", { detail: text }));
+  }, [children]);
+
   return (
     <div className="md-code">
       <div className="md-code-head">
@@ -122,9 +128,20 @@ function MdPre({ children }: { children?: ReactNode }) {
           <span className="md-code-lang">{lang}</span>
           {lines > 1 ? <span className="md-code-lines">{lines} lines</span> : null}
         </div>
-        <button type="button" className="md-copy" aria-label="Copy code" onClick={copy}>
-          {copied ? "Copied" : "Copy"}
-        </button>
+        <div className="md-code-actions">
+          <button type="button" className="md-copy" aria-label="Copy code" onClick={copy}>
+            {copied ? "Copied" : "Copy"}
+          </button>
+          <button
+            type="button"
+            className="md-insert-btn"
+            aria-label="Insert into message draft"
+            title="Insert snippet or command into message composer"
+            onClick={insert}
+          >
+            Insert
+          </button>
+        </div>
       </div>
       <pre>{children}</pre>
     </div>

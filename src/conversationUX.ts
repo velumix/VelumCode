@@ -229,6 +229,20 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     prompt: "Provide a quick overview of Velum Code agent harness features: model & reasoning selection, interactive approvals, Git diff & branch viewer, memory vault, and embedded terminal.",
     icon: "command",
   },
+  {
+    command: "/tasks",
+    label: "Tasks",
+    description: "Inspect active Kanban tasks and plan the next priority card",
+    prompt: "Inspect the Kanban tasks for this workspace. Check for in-progress or high-priority cards, verify prerequisites, and outline what we should accomplish next.",
+    icon: "board",
+  },
+  {
+    command: "/clear",
+    label: "Clear",
+    description: "Clear conversation history stream and draft",
+    prompt: "",
+    icon: "close",
+  },
 ];
 
 export function filterSlashCommands(query: string): SlashCommand[] {

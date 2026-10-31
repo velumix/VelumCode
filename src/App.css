@@ -246,8 +246,11 @@ kbd { font: inherit; }
 .md-code .git-diff-del { color: #f0837f; background: rgba(240, 131, 127, 0.1); display: inline-block; width: 100%; padding-inline: 4px; border-radius: 2px; }
 .md-code .git-diff-hunk { color: #7aa2f7; background: rgba(122, 162, 247, 0.08); display: inline-block; width: 100%; padding-inline: 4px; font-weight: 500; }
 .md-code .git-diff-hdr { color: var(--subtle); display: inline-block; width: 100%; padding-inline: 4px; font-weight: 500; }
+.md-code-actions { display: inline-flex; align-items: center; gap: 6px; }
 .md-copy { padding: 2px 6px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: calc(10px * var(--ui-scale)); cursor: pointer; }
 .md-copy:hover { background: var(--accent-dim); color: var(--text); }
+.md-insert-btn { padding: 2px 7px; border: 1px solid var(--border); border-radius: 4px; background: var(--raised); color: var(--muted); font-size: calc(10px * var(--ui-scale)); cursor: pointer; transition: all 120ms ease; }
+.md-insert-btn:hover { background: var(--hover); color: var(--text); border-color: var(--accent); }
 .md-code pre { margin: 0; padding: 12px; overflow-x: auto; font: calc(12px * var(--ui-scale))/1.65 var(--code-font); white-space: pre; }
 .md-code code.md-inline { background: none; border: 0; padding: 0; font: inherit; color: var(--text); }
 .md blockquote { margin: 10px 0; padding: 2px 0 2px 12px; border-left: 2px solid var(--accent-border); color: var(--muted); }
