@@ -17,7 +17,8 @@ const RemotePanel = lazy(() => import("./components/RemotePanel"));
 import type { PaletteAction } from "./components/CommandPalette";
 import "./App.css";
 import "./appearance.css";
-import { getPreferences, usePreferences } from "./preferences";
+import { themes } from "./appearance";
+import { getPreferences, updatePreferences, usePreferences } from "./preferences";
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 import ProviderPicker from "./components/ProviderPicker";
 import ChoiceMenu from './components/ChoiceMenu';
@@ -180,7 +181,7 @@ function versionFooterAriaLabel(updates: ReturnType<typeof useUpdates>) {
 
 export default function App() {
   const updates = useUpdates();
-  const {settings} = usePreferences();
+  const { settings } = usePreferences();
   const [recovery] = useState(loadDesktop);
   const [tabs, setTabs] = useState<Tab[]>(() => recovery.tabs.length ? recovery.tabs.map((saved, i) => ({ ...createTab(i + 1, saved.provider), ...saved })) : [createTab(1)]);
   const [activeId, setActiveId] = useState<string>(() => recovery.activeId);
@@ -544,6 +545,12 @@ export default function App() {
         e.preventDefault();
         e.stopPropagation();
         actions.togglePalette();
+      } else if (e.key === "d" || e.key === "D") {
+        const { tabs: ts, activeId: aid } = stateRef.current;
+        if (ts.find((t) => t.id === aid)?.mode !== "agent") return;
+        e.preventDefault();
+        e.stopPropagation();
+        window.dispatchEvent(new CustomEvent("velum:toggle-dashboard"));
       } else if (e.key === "l" || e.key === "L") {
         const { tabs: ts, activeId: aid } = stateRef.current;
         if (ts.find((t) => t.id === aid)?.mode !== "agent") return;
@@ -602,20 +609,27 @@ export default function App() {
   const failed = activeTab && (tabStatus(activeTab).kind === "error" || tabStatus(activeTab).kind === "exited");
 
   const paletteActions: PaletteAction[] = [
-    { id: "cmd-settings", title: "Open settings: themes, glass, layout, and preferences", hint: "Ctrl+,", run: () => setSettingsOpen(true) },
-    { id: 'cmd-bots', title: 'Open bots and schedules', run: () => setBotPanel('manage') },
-    { id: "cmd-kanban", title: "Open workspace Kanban board", run: () => { if(activeTab?.workspace) setBoardWorkspace(activeTab.workspace); } },
-    { id: "cmd-git", title: "Open Git branches and diff", run: () => { if(activeTab?.workspace) { setGitInitialMode("workstation"); setGitWorkspace(activeTab.workspace); } } },
-    { id: "cmd-github", title: "Open GitHub Hub: pull requests, issues, and repository", run: () => { if(activeTab?.workspace) { setGitInitialMode("github"); setGitWorkspace(activeTab.workspace); } } },
-    { id: "cmd-plugins", title: "Manage plugins", run: () => setPluginPanel({}) },
-    ...plugins.filter(p => p.enabled).flatMap(p => p.manifest.commands.map(c => ({ id: `plugin-${p.manifest.id}-${c.id}`, title: `${c.title} · ${p.manifest.name}`, run: () => setPluginPanel({ selection: { id: p.manifest.id, command: c.id } }) }))),
-    { id:"cmd-memory", title:"Open project memory vault", run:()=>{ if(activeTab?.workspace)setMemory({workspace:activeTab.workspace}); } },
-    { id: "cmd-remote", title: "Connect your phone with Tailscale or USB", run: () => setRemoteOpen(true) },
-    { id: "cmd-new", title: "New agent tab", hint: "Ctrl+T", run: newTab },
-    { id: "cmd-focus", title: "Focus message input", hint: "Ctrl+L", run: focusComposer },
+    { id: "cmd-toggle-dashboard", title: "Toggle Mission Dashboard (Git Diff, Kanban, Telemetry)", hint: "Ctrl+D", icon: "split", run: () => window.dispatchEvent(new CustomEvent("velum:toggle-dashboard")) },
+    { id: "cmd-dashboard-diff", title: "Mission Dashboard: Inspect Git working tree diffs", icon: "diff", run: () => window.dispatchEvent(new CustomEvent("velum:open-dashboard-tab", { detail: { tab: "diff" } })) },
+    { id: "cmd-dashboard-tasks", title: "Mission Dashboard: View tasks & Kanban board", icon: "board", run: () => window.dispatchEvent(new CustomEvent("velum:open-dashboard-tab", { detail: { tab: "tasks" } })) },
+    { id: "cmd-dashboard-activity", title: "Mission Dashboard: View tools activity log", icon: "terminal", run: () => window.dispatchEvent(new CustomEvent("velum:open-dashboard-tab", { detail: { tab: "activity" } })) },
+    { id: "cmd-dashboard-telemetry", title: "Mission Dashboard: View telemetry, context gauge & tokens", icon: "settings", run: () => window.dispatchEvent(new CustomEvent("velum:open-dashboard-tab", { detail: { tab: "telemetry" } })) },
+    { id: "cmd-dashboard-github", title: "Mission Dashboard: Open integrated GitHub Hub", icon: "github", run: () => window.dispatchEvent(new CustomEvent("velum:open-dashboard-tab", { detail: { tab: "github" } })) },
+    { id: "cmd-settings", title: "Open settings: themes, glass, layout, and preferences", hint: "Ctrl+,", icon: "settings", run: () => setSettingsOpen(true) },
+    { id: 'cmd-bots', title: 'Open bots and schedules', icon: "bot", run: () => setBotPanel('manage') },
+    { id: "cmd-kanban", title: "Open workspace Kanban board", icon: "board", run: () => { if(activeTab?.workspace) setBoardWorkspace(activeTab.workspace); } },
+    { id: "cmd-git", title: "Open Git branches and diff", icon: "branch", run: () => { if(activeTab?.workspace) { setGitInitialMode("workstation"); setGitWorkspace(activeTab.workspace); } } },
+    { id: "cmd-github", title: "Open GitHub Hub: pull requests, issues, and repository", icon: "github", run: () => { if(activeTab?.workspace) { setGitInitialMode("github"); setGitWorkspace(activeTab.workspace); } } },
+    { id: "cmd-plugins", title: "Manage plugins", icon: "sparkles", run: () => setPluginPanel({}) },
+    ...plugins.filter(p => p.enabled).flatMap(p => p.manifest.commands.map(c => ({ id: `plugin-${p.manifest.id}-${c.id}`, title: `${c.title} · ${p.manifest.name}`, icon: "sparkles" as const, run: () => setPluginPanel({ selection: { id: p.manifest.id, command: c.id } }) }))),
+    { id:"cmd-memory", title:"Open project memory vault", icon: "memory", run:()=>{ if(activeTab?.workspace)setMemory({workspace:activeTab.workspace}); } },
+    { id: "cmd-remote", title: "Connect your phone with Tailscale or USB", icon: "phone", run: () => setRemoteOpen(true) },
+    { id: "cmd-new", title: "New agent tab", hint: "Ctrl+T", icon: "plus", run: newTab },
+    { id: "cmd-focus", title: "Focus message input", hint: "Ctrl+L", icon: "chat", run: focusComposer },
     {
       id: "cmd-agent",
       title: "Switch this tab to Agent mode",
+      icon: "bot",
       run: () => {
         const id = stateRef.current.activeId;
         if (id) setMode(id, "agent");
@@ -624,28 +638,37 @@ export default function App() {
     {
       id: "cmd-terminal",
       title: "Switch this tab to Terminal mode",
+      icon: "terminal",
       run: () => {
         const id = stateRef.current.activeId;
         if (id) setMode(id, "terminal");
       },
     },
-    { id: "cmd-restart", title: "Restart this tab's session", run: restartActive },
-    { id: "cmd-notifications", title: desktop.notifications_enabled ? "Turn off background notifications" : "Turn on background notifications", run: () => void toggleNotifications() },
-    { id: "cmd-test-notification", title: "Send a test Windows notification", run: () => void testNotification() },
-    { id: "cmd-tray", title: "Hide Velum Code to the system tray", run: () => void getCurrentWindow().close() },
-    { id: "cmd-quit", title: "Quit Velum Code and stop background work", run: () => void invoke("desktop_quit") },
+    { id: "cmd-restart", title: "Restart this tab's session", icon: "reset", run: restartActive },
+    { id: "cmd-notifications", title: desktop.notifications_enabled ? "Turn off background notifications" : "Turn on background notifications", icon: "bell", run: () => void toggleNotifications() },
+    { id: "cmd-test-notification", title: "Send a test Windows notification", icon: "bell", run: () => void testNotification() },
+    { id: "cmd-tray", title: "Hide Velum Code to the system tray", icon: "down", run: () => void getCurrentWindow().close() },
+    { id: "cmd-quit", title: "Quit Velum Code and stop background work", icon: "close", run: () => void invoke("desktop_quit") },
     {
       id: "cmd-close",
       title: "Close this tab",
+      icon: "close",
       run: () => {
         const id = stateRef.current.activeId;
         if (id) closeTab(id);
       },
     },
+    ...themes.map((th) => ({
+      id: `cmd-theme-${th.id}`,
+      title: `Theme: ${th.name} (${th.dark ? "Dark" : "Light"}) · ${th.description}`,
+      icon: "sparkles" as const,
+      run: () => updatePreferences({ theme: th.id }),
+    })),
     ...tabs.map((t, i) => ({
       id: `cmd-goto-${t.id}`,
       title: `Go to conversation: ${conversationTitle(t.title)} (${t.mode})`,
       hint: i < 9 ? `Ctrl+${i + 1}` : undefined,
+      icon: "chat" as const,
       run: () => selectTab(t.id),
     })),
   ];

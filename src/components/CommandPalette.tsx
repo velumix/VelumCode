@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import Icon from "./Icon";
+import Icon, { type IconName } from "./Icon";
 
 export interface PaletteAction {
   id: string;
   title: string;
   hint?: string;
+  icon?: IconName;
   run: () => void;
 }
 
@@ -133,7 +134,7 @@ export default function CommandPalette({ actions, onClose }: CommandPaletteProps
                 requestAnimationFrame(() => a.run());
               }}
             >
-              <Icon name={a.id.startsWith("cmd-goto-") ? "chat" : a.id === "cmd-new" ? "plus" : "command"} size={16} />
+              <Icon name={a.icon || (a.id.startsWith("cmd-goto-") ? "chat" : a.id === "cmd-new" ? "plus" : "command")} size={16} />
               <span>{a.title}</span>
               {a.hint && <kbd>{a.hint}</kbd>}
             </button>

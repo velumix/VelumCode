@@ -536,8 +536,38 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
       setInput(next);
       composerRef.current?.focus();
     };
+
+    const onToggleDashboard = () => {
+      if (!activeRef.current) return;
+      setChatMode((prev) => {
+        const next = prev === "stream" ? "split" : "stream";
+        try { localStorage.setItem("velum:chat-mode", next); } catch {}
+        return next;
+      });
+    };
+
+    const onOpenDashboardTab = (e: Event) => {
+      if (!activeRef.current) return;
+      const detail = (e as CustomEvent<{ tab: "diff" | "tasks" | "activity" | "telemetry" | "github" }>).detail;
+      if (!detail?.tab) return;
+      setChatMode((prev) => {
+        if (prev === "stream") {
+          try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
+          return "split";
+        }
+        return prev;
+      });
+      setDashboardTabReq(r => ({ tab: detail.tab, seq: (r?.seq ?? 0) + 1 }));
+    };
+
     window.addEventListener("velum:insert-draft", onInsertDraft);
-    return () => window.removeEventListener("velum:insert-draft", onInsertDraft);
+    window.addEventListener("velum:toggle-dashboard", onToggleDashboard);
+    window.addEventListener("velum:open-dashboard-tab", onOpenDashboardTab);
+    return () => {
+      window.removeEventListener("velum:insert-draft", onInsertDraft);
+      window.removeEventListener("velum:toggle-dashboard", onToggleDashboard);
+      window.removeEventListener("velum:open-dashboard-tab", onOpenDashboardTab);
+    };
   }, []);
 
   const workspaceEditorId = useId();
