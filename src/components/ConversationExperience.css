@@ -595,6 +595,11 @@ button.cv-bot-pill-btn.active {
   color: var(--text);
 }
 
+.turn-touched-files.turn-history-touched {
+  margin-top: 8px;
+  padding: 2px 0;
+}
+
 /* Turn handoff in scorecard */
 .turn-handoff-row {
   display: inline-flex;

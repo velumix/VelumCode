@@ -1457,24 +1457,31 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                         <span className="message-avatar user-avatar">Y</span>
                         <div className="message-author"><strong>You</strong>{b.notSent && <span className="message-unsent">Not sent</span>}</div>
                         <CopyButton text={b.text} />
-                        <button type="button" className="memory-usage" aria-label="Remember this message" onClick={()=>onRemember(b.text)}><Icon name="memory" size={15}/></button>
+                        <button type="button" className="msg-action-btn" title="Remember this message" aria-label="Remember this message" onClick={()=>onRemember(b.text)}><Icon name="memory" size={15}/></button>
                       </div>
                       <pre>{b.text}</pre>
                     </div>
                   );
                 case "assistant": {
                   const touched = turnTouchedFiles(blocks, b.id);
+                  const isLatestAssistant = lastAssistant?.id === b.id;
                   return (
                     <div key={b.id} className="msg assistant">
                       <div className="message-header">
                         <span className="message-avatar muse-avatar">{bot ? <BotAvatar bot={bot} size={38} status={b.open && running ? orbStatus : "idle"} /> : <VelumMark size={38} status={b.open && running ? orbStatus : "idle"} />}</span>
                         <div className="message-author"><strong>{bot?.name||providerNames[provider]}<span className="assistant-badge">{bot?providerNames[provider]:'AI'}</span></strong></div>
                         <CopyButton text={b.text} />
-                        <button type="button" className="memory-usage" aria-label="Remember this answer" onClick={()=>onRemember(b.text)}><Icon name="memory" size={15}/></button>
+                        <button type="button" className="msg-action-btn" title="Remember this answer" aria-label="Remember this answer" onClick={()=>onRemember(b.text)}><Icon name="memory" size={15}/></button>
                       </div>
                       <Markdown text={b.text} />
-                      {!b.open && <div className={`response-actions${lastAssistant?.id===b.id ? ' latest-response' : ''}`}><button type="button" onClick={()=>setCorrection({id:b.id,answer:b.text})}><Icon name="edit" size={14}/>Correct response</button>{lastAssistant?.id===b.id && !running && lastStatusRef.current.kind==='done' && <span className="response-finish"><Icon name="check" size={12}/>Ready for your next idea</span>}</div>}
                       {!b.open && (
+                        <div className={`response-actions${isLatestAssistant ? ' latest-response' : ''}`}>
+                          <button type="button" onClick={()=>setCorrection({id:b.id,answer:b.text})}>
+                            <Icon name="edit" size={14}/>Correct response
+                          </button>
+                        </div>
+                      )}
+                      {!b.open && isLatestAssistant && (
                         <div className="turn-scorecard">
                           <div className="turn-scorecard-status">
                             <Icon name="check" size={13} />
@@ -1543,6 +1550,28 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                               <span>Hand off…</span>
                             </button>
                           </div>
+                        </div>
+                      )}
+                      {!b.open && !isLatestAssistant && touched.length > 0 && (
+                        <div className="turn-touched-files turn-history-touched">
+                          <span style={{ fontSize: "10px", color: "var(--muted)" }}>Touched files:</span>
+                          {touched.map((file) => (
+                            <button
+                              key={file}
+                              type="button"
+                              className="turn-diff-pill"
+                              title={`Inspect diff for ${file} in Mission Dashboard`}
+                              onClick={() => {
+                                setSelectedDiffFile(file);
+                                setChatMode("split");
+                                setDashboardTabReq(r => ({ tab: "diff", seq: (r?.seq ?? 0) + 1 }));
+                                try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
+                              }}
+                            >
+                              <Icon name="diff" size={11} />
+                              <span>{file.split(/[\\/]/).pop()}</span>
+                            </button>
+                          ))}
                         </div>
                       )}
                       {correction?.id === b.id && <CorrectionComposer running={running} disabled={!ready || applying} owner={bot?.name} onClose={closeCorrection} remember={rememberLesson} submit={async (text,lesson)=>{

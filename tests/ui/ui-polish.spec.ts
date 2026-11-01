@@ -207,3 +207,51 @@ test("mission dashboard tools log tab provides category filters, command search,
   const axe = await new AxeBuilder({ page }).include(".sd-activity-pane").analyze();
   expect(axe.violations).toEqual([]);
 });
+
+test("turn scorecard is scoped to the latest turn and past turns display compact history", async ({ page }) => {
+  await boot(page);
+
+  // Send turn 1
+  await page.locator(".composer textarea").fill("First message");
+  await page.locator(".composer textarea").press("Enter");
+
+  await page.evaluate(() => {
+    const q = (window as any).qa;
+    q.agent({ kind: "tool_start", task_id: "t-turn1", name: "inspect_file", detail: "src/first.ts" });
+    q.agent({ kind: "tool_delta", task_id: "t-turn1", text: "ok" });
+    q.agent({ kind: "tool_end", task_id: "t-turn1", status: "completed" });
+    q.agent({ kind: "turn_end", status: "completed", text: "First reply." });
+  });
+
+  // Latest response has scorecard with Turn complete and handoff
+  const scorecard = page.locator(".turn-scorecard");
+  await expect(scorecard).toBeVisible();
+  await expect(scorecard.locator(".turn-scorecard-status")).toContainText("Turn complete");
+  await expect(scorecard.locator(".turn-handoff-row")).toBeVisible();
+
+  // Send turn 2
+  await page.locator(".composer textarea").fill("Second message");
+  await page.locator(".composer textarea").press("Enter");
+
+  await page.evaluate(() => {
+    const q = (window as any).qa;
+    q.agent({ kind: "turn_end", status: "completed", text: "Second reply." });
+  });
+
+  // Verify only ONE .turn-scorecard exists across the entire conversation (on the latest response)
+  await expect(page.locator(".turn-scorecard")).toHaveCount(1);
+
+  // Verify older assistant message does not have repetitive handoff buttons
+  const assistantMsgs = page.locator(".msg.assistant");
+  await expect(assistantMsgs).toHaveCount(2);
+  await expect(assistantMsgs.first().locator(".turn-handoff-row")).toHaveCount(0);
+
+  // Message header action buttons use .msg-action-btn with accessible labels
+  const rememberBtns = page.locator(".msg-action-btn");
+  await expect(rememberBtns.first()).toBeVisible();
+  await expect(rememberBtns.first()).toHaveAttribute("aria-label", /Remember/);
+
+  // Accessibility check on chat scroll with multiple turns
+  const axe = await new AxeBuilder({ page }).include(".chat-scroll").analyze();
+  expect(axe.violations).toEqual([]);
+});

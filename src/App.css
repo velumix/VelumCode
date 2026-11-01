@@ -217,6 +217,9 @@ kbd { font: inherit; }
 .msg:hover .msg-copy, .msg:focus-within .msg-copy { opacity: 1; }
 .msg-copy:hover { background: var(--hover); color: var(--text); }
 .msg-copy.copied { color: var(--ok); opacity: 1; }
+.msg-action-btn { position: relative; display: grid; place-items: center; width: 26px; height: 26px; border: 0; border-radius: 6px; color: var(--subtle); background: transparent; opacity: 0; cursor: pointer; transition: opacity 140ms, background 140ms, color 140ms; }
+.msg:hover .msg-action-btn, .msg:focus-within .msg-action-btn { opacity: 1; }
+.msg-action-btn:hover { background: var(--hover); color: var(--text); }
 .copy-feedback { position: absolute; right: 32px; width: max-content; white-space: nowrap; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--ok-bg); color: var(--text); font-size: calc(9.5px * var(--ui-scale)); pointer-events: none; animation: content-arrive 160ms var(--ease-out) both; }
 .msg > pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: calc(13px * var(--ui-scale))/1.65 "Segoe UI", sans-serif; }
 .md { font-size: calc(13.5px * var(--ui-scale)); line-height: 1.7; overflow-wrap: anywhere; }

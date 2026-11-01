@@ -820,21 +820,28 @@ pub fn agent_tools_disconnect(
 /// Invoked before Tauri starts, so it never opens a window or joins the
 /// single-instance application. No credentials are stored in MCP config.
 pub fn stdio() -> Result<(), String> {
-    let url = std::env::var(URL_ENV)
-        .map_err(|_| "Velum tools are available only to a provider launched by Velum Code.")?;
-    let token = std::env::var(TOKEN_ENV).map_err(|_| "Missing turn credentials.")?;
-    let parsed = reqwest::Url::parse(&url).map_err(|_| "Invalid tool endpoint.")?;
-    if parsed.scheme() != "http"
-        || parsed.host_str() != Some("127.0.0.1")
-        || parsed.path() != "/mcp"
-    {
-        return Err("Expected a Velum loopback endpoint.".into());
-    }
-    let client = reqwest::blocking::Client::builder()
-        .no_proxy()
-        .timeout(Duration::from_secs(40))
-        .build()
-        .map_err(|_| "Cannot create tool transport.")?;
+    let url_opt = std::env::var(URL_ENV).ok();
+    let token_opt = std::env::var(TOKEN_ENV).ok();
+
+    let active_client = match (url_opt, token_opt) {
+        (Some(url), Some(token)) => {
+            let parsed = reqwest::Url::parse(&url).map_err(|_| "Invalid tool endpoint.")?;
+            if parsed.scheme() != "http"
+                || parsed.host_str() != Some("127.0.0.1")
+                || parsed.path() != "/mcp"
+            {
+                return Err("Expected a Velum loopback endpoint.".into());
+            }
+            let client = reqwest::blocking::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(40))
+                .build()
+                .map_err(|_| "Cannot create tool transport.")?;
+            Some((client, url, token))
+        }
+        _ => None,
+    };
+
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout().lock();
     for line in stdin.lock().lines() {
@@ -843,26 +850,81 @@ pub fn stdio() -> Result<(), String> {
             return Err("MCP request exceeds 128 KiB.".into());
         }
         let request: Value = serde_json::from_str(&line).map_err(|_| "Invalid MCP JSON.")?;
-        if request.get("id").is_none() {
-            continue;
+        let id = match request.get("id") {
+            Some(id) if !id.is_null() => id.clone(),
+            _ => continue,
+        };
+
+        if let Some((ref client, ref url, ref token)) = active_client {
+            let reply = client
+                .post(url)
+                .bearer_auth(token)
+                .header("content-type", "application/json")
+                .body(request.to_string())
+                .send()
+                .map_err(|_| "Velum's tool host could not be reached.")?;
+            if !reply.status().is_success() {
+                return Err("This Velum turn expired or its tools were disabled.".into());
+            }
+            let reply: Value =
+                serde_json::from_str(&reply.text().map_err(|_| "Invalid tool response.")?)
+                    .map_err(|_| "Invalid tool response.")?;
+            writeln!(stdout, "{reply}").map_err(|_| "MCP output closed.")?;
+            stdout.flush().map_err(|_| "MCP output closed.")?;
+        } else {
+            let response = handle_offline_mcp(&request, &id);
+            writeln!(stdout, "{response}").map_err(|_| "MCP output closed.")?;
+            stdout.flush().map_err(|_| "MCP output closed.")?;
         }
-        let reply = client
-            .post(&url)
-            .bearer_auth(&token)
-            .header("content-type", "application/json")
-            .body(request.to_string())
-            .send()
-            .map_err(|_| "Velum's tool host could not be reached.")?;
-        if !reply.status().is_success() {
-            return Err("This Velum turn expired or its tools were disabled.".into());
-        }
-        let reply: Value =
-            serde_json::from_str(&reply.text().map_err(|_| "Invalid tool response.")?)
-                .map_err(|_| "Invalid tool response.")?;
-        writeln!(stdout, "{reply}").map_err(|_| "MCP output closed.")?;
-        stdout.flush().map_err(|_| "MCP output closed.")?;
     }
     Ok(())
+}
+
+pub(crate) fn handle_offline_mcp(request: &Value, id: &Value) -> Value {
+    let method = request.get("method").and_then(|m| m.as_str()).unwrap_or("");
+    match method {
+        "initialize" => {
+            let version = request
+                .get("params")
+                .and_then(|p| p.get("protocolVersion"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("2024-11-05");
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "protocolVersion": version,
+                    "capabilities": {
+                        "tools": {}
+                    },
+                    "serverInfo": {
+                        "name": "velum_code",
+                        "version": env!("CARGO_PKG_VERSION")
+                    },
+                    "instructions": "Velum host tools connect when launched inside a Velum Code session."
+                }
+            })
+        }
+        "tools/list" => {
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "tools": []
+                }
+            })
+        }
+        _ => {
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {
+                    "code": -32000,
+                    "message": "Velum tools are available only to a provider launched by Velum Code."
+                }
+            })
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1009,5 +1071,34 @@ mod tests {
         ] {
             assert!(!allowed(&scope, &current, name));
         }
+    }
+    #[test]
+    fn offline_mcp_handles_initialize_and_tools_list_gracefully() {
+        let init_req = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2024-11-05"}
+        });
+        let res = handle_offline_mcp(&init_req, &json!(1));
+        assert_eq!(res["result"]["serverInfo"]["name"], "velum_code");
+        assert_eq!(res["result"]["protocolVersion"], "2024-11-05");
+
+        let tools_req = json!({
+            "jsonrpc": "2.0",
+            "id": "req-2",
+            "method": "tools/list"
+        });
+        let res = handle_offline_mcp(&tools_req, &json!("req-2"));
+        assert_eq!(res["result"]["tools"], json!([]));
+
+        let call_req = json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "git_status"}
+        });
+        let res = handle_offline_mcp(&call_req, &json!(3));
+        assert_eq!(res["error"]["code"], -32000);
     }
 }
