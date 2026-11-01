@@ -143,6 +143,7 @@ pub fn run() {
             runner::agent_new,
             runner::agent_validate_workspace,
             runner::agent_send,
+            runner::agent_save_attachment,
             runner::agent_queue,
             runner::agent_interactions,
             runner::agent_respond,

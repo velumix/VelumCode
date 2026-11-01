@@ -36,8 +36,21 @@ export type AgentStatus = (
   | { kind: "done" }
   | { kind: "error"; message: string }) & { queued?: number; queuePaused?: boolean };
 
+export interface ChatAttachmentPreview {
+  name: string;
+  path?: string;
+  dataUrl?: string;
+}
+
+export interface PendingAttachment {
+  name: string;
+  dataUrl: string;
+  size: number;
+  type: string;
+}
+
 type Block =
-  | { id: number; kind: "user"; text: string; notSent?: boolean }
+  | { id: number; kind: "user"; text: string; notSent?: boolean; attachments?: ChatAttachmentPreview[] }
   | { id: number; kind: "assistant"; text: string; open: boolean }
   | {
       id: number;
@@ -145,6 +158,28 @@ function turnTouchedFiles(blocks: Block[], assistantId: number): string[] {
     }
   }
   return Array.from(files).slice(0, 4);
+}
+
+function parseAttachedImage(text: string): { imageTag?: string; imagePath?: string; relativePath?: string; cleanText: string } {
+  const match = text.match(/^\[Attached image:\s*([^\s)]+)(?:\s*\((file:\/\/\/[^)]+)\))?\]\s*/);
+  if (!match) {
+    return { cleanText: text };
+  }
+  const relativePath = match[1];
+  const fileUrl = match[2];
+  const cleanText = text.slice(match[0].length).trim();
+  return {
+    imageTag: match[0],
+    relativePath,
+    imagePath: fileUrl || relativePath,
+    cleanText: cleanText || "Please inspect and analyze this attached image.",
+  };
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function SendIcon() {
@@ -479,8 +514,48 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
   const [selectedDiffFile, setSelectedDiffFile] = useState<string | null>(null);
   const [gitChangedCount, setGitChangedCount] = useState(0);
   const [dashboardTabReq, setDashboardTabReq] = useState<{ tab: "diff" | "tasks" | "activity" | "telemetry" | "github"; seq: number } | null>(null);
+  const [pendingAttachment, setPendingAttachment] = useState<PendingAttachment | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [viewingImage, setViewingImage] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const activeRef = useRef(active);
   activeRef.current = active;
+
+  useEffect(() => {
+    if (!viewingImage) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setViewingImage(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [viewingImage]);
+
+  const handleFileAttachment = useCallback((file: File) => {
+    if (!file.type.startsWith("image/")) {
+      setWorkspaceError("Only images (PNG, JPEG, WebP, GIF, SVG) are supported for photo input.");
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      setWorkspaceError("Image is too large. Choose a picture under 20 MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setPendingAttachment({
+          name: file.name || "pasted_photo.png",
+          dataUrl: reader.result,
+          size: file.size,
+          type: file.type || "image/png",
+        });
+        setWorkspaceError("");
+      }
+    };
+    reader.onerror = () => {
+      setWorkspaceError("Failed to read image file.");
+    };
+    reader.readAsDataURL(file);
+  }, []);
 
   useEffect(() => {
     if (!effective || !active) {
@@ -1117,16 +1192,40 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
   }, []);
 
   const sendText = useCallback(
-    (text: string, preserveDraft = false) => {
-      const prompt = text.trim();
+    async (text: string, preserveDraft = false) => {
+      let prompt = text.trim();
       const nativeId = nativeIdRef.current;
-      if (!prompt || !ready || !nativeId || applyingRef.current) return Promise.resolve(false);
-      if (terminalOwnsConversation) return Promise.resolve(false);
+      if (!ready || !nativeId || applyingRef.current) return false;
+      if (terminalOwnsConversation) return false;
+
+      let savedAttachment: { name: string; path: string; relative_path: string } | null = null;
+      const currentPending = pendingAttachment;
+      if (currentPending) {
+        try {
+          const res = await invoke<{ name: string; path: string; relative_path: string }>(
+            "agent_save_attachment",
+            {
+              workspace: effective || null,
+              name: currentPending.name,
+              dataBase64: currentPending.dataUrl,
+            }
+          );
+          savedAttachment = res;
+          const tag = `[Attached image: ${res.relative_path} (file:///${res.path.replace(/\\/g, "/")})]`;
+          prompt = prompt ? `${tag}\n\n${prompt}` : `${tag}\n\nPlease inspect and analyze this attached image.`;
+          setPendingAttachment(null);
+        } catch (err) {
+          setWorkspaceError(`Could not save photo attachment: ${String(err)}`);
+          return false;
+        }
+      }
+
+      if (!prompt) return false;
       if (runningRef.current || queueRef.current.items.length || queueRef.current.paused) {
         if (!preserveDraft) { inputRef.current = ''; setInput(''); setHistIdx(null); }
         return invoke('agent_send', { id: nativeId, prompt, yolo }).then(()=>nativeIdRef.current === nativeId).catch((error: unknown) => {
           if (nativeIdRef.current !== nativeId) return false;
-          if (!preserveDraft) setInput(draft => draft || prompt);
+          if (!preserveDraft) setInput(draft => draft || text);
           setBlocks(previous => [...previous, { id: ++idRef.current, kind: 'user', text: prompt, notSent: true },
             { id: ++idRef.current, kind: 'notice', text: `Could not queue: ${String(error)}`, tone: 'error', recovery: recoverableRequest('not_sent', prompt) }]);
           return false;
@@ -1150,7 +1249,10 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
       setTurnEpoch(previous => previous + 1);
       const userId = ++idRef.current;
       optimisticPromptRef.current = { prompt, blockId: userId };
-      setBlocks((prev) => [...prev, { id: userId, kind: "user", text: prompt }]);
+      const atts: ChatAttachmentPreview[] | undefined = savedAttachment && currentPending ? [
+        { name: savedAttachment.name, path: savedAttachment.path, dataUrl: currentPending.dataUrl }
+      ] : undefined;
+      setBlocks((prev) => [...prev, { id: userId, kind: "user", text: prompt, attachments: atts }]);
       setRunning(true);
       setActivity("");
       setStatus({ kind: "running" });
@@ -1165,14 +1267,14 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
         if (optimisticPromptRef.current?.blockId === userId) optimisticPromptRef.current = null;
         const message = err instanceof Error ? err.message : String(err);
         setBlocks((prev) => [...prev.map((b) => b.id === userId && b.kind === "user" ? { ...b, notSent: true } : b), { id: ++idRef.current, kind: "notice", text: message, tone: "error", recovery: recoverableRequest('not_sent', prompt) }]);
-        if (!preserveDraft) setInput((draft) => draft || prompt);
+        if (!preserveDraft) setInput((draft) => draft || text);
         setRunning(false);
         runningRef.current = false;
         setStatus({ kind: "error", message });
         return false;
       });
     },
-    [ready, sessionId, setStatus, yolo, onTitle, terminalOwnsConversation],
+    [ready, sessionId, setStatus, yolo, onTitle, terminalOwnsConversation, pendingAttachment, effective],
   );
 
   const send = useCallback(() => sendText(inputRef.current), [sendText]);
@@ -1450,7 +1552,11 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
               }
               const b = row.block;
               switch (b.kind) {
-                case "user":
+                case "user": {
+                  const parsed = parseAttachedImage(b.text);
+                  const hasAttachment = Boolean(b.attachments?.length || parsed.imagePath);
+                  const imgSrc = b.attachments?.[0]?.dataUrl || parsed.imagePath;
+                  const imgName = b.attachments?.[0]?.name || parsed.relativePath?.split(/[\\/]/).pop() || "Attached photo";
                   return (
                     <div key={b.id} className="msg user">
                       <div className="message-header">
@@ -1459,9 +1565,33 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                         <CopyButton text={b.text} />
                         <button type="button" className="msg-action-btn" title="Remember this message" aria-label="Remember this message" onClick={()=>onRemember(b.text)}><Icon name="memory" size={15}/></button>
                       </div>
-                      <pre>{b.text}</pre>
+                      {hasAttachment && imgSrc && (
+                        <div className="msg-attachment-preview">
+                          <div className="msg-attachment-card">
+                            <button
+                              type="button"
+                              className="msg-attachment-thumb-btn"
+                              onClick={() => setViewingImage(imgSrc)}
+                              aria-label={`View photo: ${imgName}`}
+                              title="Click to view full photo"
+                            >
+                              <img
+                                src={imgSrc}
+                                alt={imgName}
+                                className="msg-attachment-thumb"
+                              />
+                            </button>
+                            <div className="msg-attachment-meta">
+                              <Icon name="image" size={13} />
+                              <span className="msg-attachment-name">{imgName}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      <pre>{parsed.cleanText}</pre>
                     </div>
                   );
+                }
                 case "assistant": {
                   const touched = turnTouchedFiles(blocks, b.id);
                   const isLatestAssistant = lastAssistant?.id === b.id;
@@ -1646,7 +1776,44 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
       {!yolo && workspaceNotice && <div className="notice" role="status">{workspaceNotice}</div>}
       {draftError && <div className="notice error" role="alert">Your draft could not be saved. Copy it before closing Velum Code.</div>}
       {terminalOwnsConversation && <div className="notice" role="status">A terminal owns this conversation. Native prompts are answered there; close it before returning to chat. <button type="button" className="workspace-btn" onClick={() => void onCloseContinuedTerminal?.().then(() => setAttachedTerminal(false)).catch(error => setWorkspaceError(String(error)))}>Close terminal and return to chat</button></div>}
-      <div className={`composer${running ? " is-running" : ""}${input.trim() ? " has-draft" : ""}`}>
+      <div
+        className={`composer${running ? " is-running" : ""}${input.trim() || pendingAttachment ? " has-draft" : ""}${isDragOver ? " is-drag-over" : ""}`}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes("Files")) {
+            e.preventDefault();
+            setIsDragOver(true);
+          }
+        }}
+        onDragLeave={() => setIsDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setIsDragOver(false);
+          const file = Array.from(e.dataTransfer.files).find((f) => f.type.startsWith("image/"));
+          if (file) {
+            handleFileAttachment(file);
+          }
+        }}
+      >
+        {pendingAttachment && (
+          <div className="composer-attachment-preview">
+            <div className="attachment-thumb-wrap">
+              <img src={pendingAttachment.dataUrl} alt={pendingAttachment.name} className="attachment-thumb" />
+              <div className="attachment-info">
+                <span className="attachment-name">{pendingAttachment.name}</span>
+                <span className="attachment-size">{formatBytes(pendingAttachment.size)}</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="attachment-remove-btn"
+              title="Remove photo"
+              aria-label="Remove photo"
+              onClick={() => setPendingAttachment(null)}
+            >
+              <Icon name="close" size={14} />
+            </button>
+          </div>
+        )}
         {slashOpen && slashMatches.length > 0 && (
           <div className="slash-menu" role="listbox" aria-label="Available slash commands">
             <div className="slash-menu-head">
@@ -1681,6 +1848,21 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
           placeholder={ready ? running ? 'Add a message to the queue…' : `What’s on your mind? Ask ${bot?.name||providerNames[provider]}…` : "Getting ready…"}
           aria-label={`Message ${bot?.name||providerNames[provider]}`}
           disabled={!ready || applying || terminalOwnsConversation}
+          onPaste={(e) => {
+            const items = e.clipboardData?.items;
+            if (items) {
+              for (let i = 0; i < items.length; i++) {
+                if (items[i].type.startsWith("image/")) {
+                  const file = items[i].getAsFile();
+                  if (file) {
+                    e.preventDefault();
+                    handleFileAttachment(file);
+                    return;
+                  }
+                }
+              }
+            }
+          }}
           onChange={(e) => {
             const val = e.target.value;
             setHistIdx(null);
@@ -1763,6 +1945,27 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
           ) : null}
           {settings.sendShortcut === "ctrl-enter" ? "Ctrl / ⌘ + Enter to send" : "Shift + Enter for a new line"}
         </span>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) handleFileAttachment(f);
+            e.target.value = "";
+          }}
+        />
+        <button
+          type="button"
+          className="yolo-btn"
+          aria-label="Attach photo"
+          title="Attach photo or image to analyze (or paste with Ctrl+V)"
+          disabled={!ready || running}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <Icon name="image" size={16} />
+        </button>
         <button
           type="button"
           className="yolo-btn"
@@ -1804,7 +2007,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
             type="button"
             className="composer-btn"
             onClick={send}
-            disabled={!ready || !input.trim() || terminalOwnsConversation}
+            disabled={!ready || (!input.trim() && !pendingAttachment) || terminalOwnsConversation}
             aria-label={running || queue.items.length > 0 ? 'Queue message' : 'Send'}
             title={running || queue.items.length > 0 ? 'Queue message' : 'Send'}
           >
@@ -1873,6 +2076,27 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
         if (input.length + extra.length > 64000) throw new Error('The message is too long to add this report. Copy it instead, or shorten your draft.');
         setInput(previous => previous + extra); setContextSnapshot(null); composerRef.current?.focus();
       }}/></Suspense>}
+      {viewingImage && (
+        <div
+          className="image-lightbox-scrim"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Photo viewer"
+          onClick={() => setViewingImage(null)}
+        >
+          <div className="image-lightbox-modal" onClick={(e) => e.stopPropagation()}>
+            <img src={viewingImage} alt="Full resolution view" className="image-lightbox-img" />
+            <button
+              type="button"
+              className="image-lightbox-close"
+              aria-label="Close photo view"
+              onClick={() => setViewingImage(null)}
+            >
+              <Icon name="close" size={16} />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

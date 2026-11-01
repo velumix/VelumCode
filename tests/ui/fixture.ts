@@ -667,6 +667,16 @@ export async function boot(page: Page, delay = 0, configure = true, waitForStart
             if(request.action==='edit'){const message=q.items.find((m:any)=>m.id===request.message_id);if(!message)throw 'Queued message already started.';message.prompt=request.prompt.trim();}
             publishQueue(args.id);nextQueued(args.id);return structuredClone(q);
           }
+          if (cmd === "agent_save_attachment") {
+            const sanitized = (args.name || "image.png").replace(/[^a-zA-Z0-9._-]/g, "_");
+            return {
+              name: sanitized,
+              path: `C:\\Projects\\VelumCode\\.attachments\\${sanitized}`,
+              relative_path: `.attachments/${sanitized}`,
+              size_bytes: 1024,
+              mime_type: "image/png",
+            };
+          }
           if (cmd === "agent_stop") {
             const snapshot=api.interactions.get(args.id);
             if(snapshot){snapshot.active=false;snapshot.revision++;for(const request of snapshot.requests)if(['pending','submitting'].includes(request.status))request.status='expired';api.emit('agent-interactions',{id:args.id,snapshot:structuredClone(snapshot)});}

@@ -665,3 +665,191 @@ button.cv-bot-pill-btn.active {
   100% { transform: scale(0.9); opacity: 0.6; }
 }
 
+/* Photo & Image Attachments */
+.composer.is-drag-over {
+  border-color: var(--accent, #84baff) !important;
+  background: rgba(132, 186, 255, 0.05);
+}
+
+.composer-attachment-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  margin: 6px 12px 2px;
+  background: var(--raised, #24252a);
+  border: 1px solid var(--border, #3a3c42);
+  border-radius: 8px;
+  animation: content-arrive 160ms ease-out both;
+}
+
+.attachment-thumb-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.attachment-thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid var(--border, #3a3c42);
+  flex-shrink: 0;
+}
+
+.attachment-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.attachment-name {
+  font-size: calc(11px * var(--ui-scale, 1));
+  font-weight: 550;
+  color: var(--text, #e8eaed);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.attachment-size {
+  font-size: calc(9.5px * var(--ui-scale, 1));
+  color: var(--muted, #adb1b9);
+}
+
+.attachment-remove-btn {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted, #adb1b9);
+  cursor: pointer;
+  transition: all 120ms ease;
+  flex-shrink: 0;
+}
+
+.attachment-remove-btn:hover {
+  background: var(--hover, #353638);
+  color: var(--danger, #f48771);
+}
+
+/* User Message Attachment Display */
+.msg-attachment-preview {
+  margin-bottom: 10px;
+}
+
+.msg-attachment-card {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--border, #3a3c42);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.15);
+  max-width: 280px;
+}
+
+.msg-attachment-thumb-btn {
+  display: block;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.msg-attachment-thumb-btn:focus-visible {
+  outline: 2px solid var(--focus-ring, #5e9eff);
+  outline-offset: 2px;
+}
+
+.msg-attachment-thumb {
+  max-width: 260px;
+  max-height: 220px;
+  border-radius: 6px;
+  object-fit: contain;
+  cursor: pointer;
+  transition: transform 120ms ease, opacity 120ms ease;
+}
+
+.msg-attachment-thumb:hover {
+  opacity: 0.92;
+  transform: scale(1.01);
+}
+
+.msg-attachment-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: calc(10px * var(--ui-scale, 1));
+  color: var(--muted, #adb1b9);
+  overflow: hidden;
+}
+
+.msg-attachment-meta span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Photo Lightbox Preview Modal */
+.image-lightbox-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(4px);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  cursor: zoom-out;
+  animation: content-arrive 140ms ease-out both;
+}
+
+.image-lightbox-modal {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  cursor: default;
+}
+
+.image-lightbox-img {
+  max-width: 88vw;
+  max-height: 82vh;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  object-fit: contain;
+}
+
+.image-lightbox-close {
+  position: absolute;
+  top: -14px;
+  right: -14px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: var(--raised, #24252a);
+  color: var(--text, #e8eaed);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+

@@ -8,6 +8,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
 };
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::child_process::{self, SharedChild};
@@ -1864,6 +1865,126 @@ pub fn agent_set_permissions(
     Ok(serde_json::json!({"yolo":yolo,"new_session":changed,"checks_invalidated":changed}))
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AttachmentInfo {
+    pub name: String,
+    pub path: String,
+    pub relative_path: String,
+    pub size_bytes: usize,
+    pub mime_type: String,
+}
+
+pub fn decode_base64(input: &str) -> Result<Vec<u8>, String> {
+    let clean: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+    let mut table = [0xFFu8; 256];
+    for (i, &b) in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".iter().enumerate() {
+        table[b as usize] = i as u8;
+    }
+    let bytes = clean.as_bytes();
+    if bytes.is_empty() || bytes.len() % 4 != 0 {
+        return Err("Invalid base64 payload length.".into());
+    }
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    for chunk in bytes.chunks(4) {
+        let mut b = [0u32; 4];
+        let mut pad = 0;
+        for (i, &c) in chunk.iter().enumerate() {
+            if c == b'=' {
+                pad += 1;
+                b[i] = 0;
+            } else {
+                let v = table[c as usize];
+                if v == 0xFF {
+                    return Err("Invalid base64 character.".into());
+                }
+                b[i] = v as u32;
+            }
+        }
+        let triple = (b[0] << 18) | (b[1] << 12) | (b[2] << 6) | b[3];
+        out.push(((triple >> 16) & 0xFF) as u8);
+        if pad < 2 {
+            out.push(((triple >> 8) & 0xFF) as u8);
+        }
+        if pad < 1 {
+            out.push((triple & 0xFF) as u8);
+        }
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn agent_save_attachment(
+    workspace: Option<String>,
+    name: String,
+    data_base64: String,
+) -> Result<AttachmentInfo, String> {
+    let (mime_type, payload) = if let Some((meta, rest)) = data_base64.split_once(";base64,") {
+        let mime = meta.strip_prefix("data:").unwrap_or("image/png");
+        (mime.to_string(), rest)
+    } else {
+        ("image/png".to_string(), data_base64.as_str())
+    };
+
+    let bytes = decode_base64(payload)?;
+    if bytes.len() > 25 * 1024 * 1024 {
+        return Err("Attachment exceeds maximum allowed size of 25 MB.".into());
+    }
+
+    let base_name: String = name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+        .collect();
+    let base_name = if base_name.is_empty() {
+        "image.png".to_string()
+    } else {
+        base_name
+    };
+
+    let ext = std::path::Path::new(&base_name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_else(|| "png".to_string());
+
+    let stem = std::path::Path::new(&base_name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("photo");
+
+    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+    let safe_filename = format!("{stem}_{timestamp}.{ext}");
+
+    let (dir, relative_path) = if let Some(ws) = workspace.filter(|w| !w.is_empty()) {
+        let ws_path = std::path::PathBuf::from(ws);
+        if ws_path.is_dir() {
+            let att_dir = ws_path.join(".attachments");
+            let _ = std::fs::create_dir_all(&att_dir);
+            (att_dir, format!(".attachments/{safe_filename}"))
+        } else {
+            let temp_dir = std::env::temp_dir().join("velum-code-attachments");
+            let _ = std::fs::create_dir_all(&temp_dir);
+            (temp_dir.clone(), temp_dir.join(&safe_filename).to_string_lossy().to_string())
+        }
+    } else {
+        let temp_dir = std::env::temp_dir().join("velum-code-attachments");
+        let _ = std::fs::create_dir_all(&temp_dir);
+        (temp_dir.clone(), temp_dir.join(&safe_filename).to_string_lossy().to_string())
+    };
+
+    let file_path = dir.join(&safe_filename);
+    std::fs::write(&file_path, &bytes).map_err(|e| format!("Failed to save attachment: {e}"))?;
+
+    let canonical = std::fs::canonicalize(&file_path).unwrap_or(file_path);
+
+    Ok(AttachmentInfo {
+        name: safe_filename,
+        path: canonical.display().to_string(),
+        relative_path,
+        size_bytes: bytes.len(),
+        mime_type,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn send_inner(
     app: AppHandle,
@@ -2983,5 +3104,37 @@ mod tests {
             before.iter().all(|p| after.contains(p)),
             "pre-existing ping reaped: {after:?}"
         );
+    }
+
+    #[test]
+    fn attachment_decodes_base64_and_saves_photo_safely() {
+        use super::*;
+        // Test base64 decoder with padding
+        let data = "SGVsbG8gVmVsdW0gUGhvdG8h"; // "Hello Velum Photo!"
+        let decoded = decode_base64(data).unwrap();
+        assert_eq!(String::from_utf8_lossy(&decoded), "Hello Velum Photo!");
+
+        // Test with data URL prefix
+        let data_url = format!("data:image/png;base64,{data}");
+        let temp_ws = std::env::temp_dir().join(format!("velum-ws-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_ws).unwrap();
+
+        let att = agent_save_attachment(
+            Some(temp_ws.to_string_lossy().to_string()),
+            "my test image.png".into(),
+            data_url,
+        )
+        .unwrap();
+
+        assert_eq!(att.mime_type, "image/png");
+        assert!(att.name.starts_with("mytestimage_"));
+        assert!(att.name.ends_with(".png"));
+        assert!(att.relative_path.starts_with(".attachments/"));
+        assert!(std::path::Path::new(&att.path).is_file());
+
+        let read_back = std::fs::read(&att.path).unwrap();
+        assert_eq!(read_back, decoded);
+
+        let _ = std::fs::remove_dir_all(&temp_ws);
     }
 }

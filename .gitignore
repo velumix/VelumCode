@@ -31,6 +31,8 @@ android/**/build/
 android/local.properties
 android/*.apk
 artifacts/
+.attachments/
+.velum/
 
 # Editor directories and files
 .vscode/*

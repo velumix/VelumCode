@@ -255,3 +255,75 @@ test("turn scorecard is scoped to the latest turn and past turns display compact
   const axe = await new AxeBuilder({ page }).include(".chat-scroll").analyze();
   expect(axe.violations).toEqual([]);
 });
+
+test("user can attach photo in chat, preview it, remove it, send it, and inspect in lightbox modal", async ({ page }) => {
+  await boot(page);
+
+  // 1. Verify "Attach photo" button is present and accessible
+  const attachBtn = page.getByRole("button", { name: "Attach photo" });
+  await expect(attachBtn).toBeVisible();
+
+  // 2. Set an image file via the hidden input
+  const fileInput = page.locator(".composer input[type='file']");
+  await fileInput.setInputFiles({
+    name: "screenshot.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64"),
+  });
+
+  // 3. Verify composer preview appears with filename and thumbnail
+  const preview = page.locator(".composer-attachment-preview");
+  await expect(preview).toBeVisible();
+  await expect(preview.locator(".attachment-name")).toHaveText("screenshot.png");
+  await expect(preview.locator(".attachment-thumb")).toBeVisible();
+
+  // Test remove attachment
+  const removeBtn = preview.locator(".attachment-remove-btn");
+  await expect(removeBtn).toBeVisible();
+  await removeBtn.click();
+  await expect(preview).not.toBeVisible();
+
+  // Attach again to send
+  await fileInput.setInputFiles({
+    name: "diagram.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64"),
+  });
+  await expect(preview).toBeVisible();
+  await expect(preview.locator(".attachment-name")).toHaveText("diagram.png");
+
+  // Type a prompt and send
+  await page.locator(".composer textarea").fill("Analyze this architecture diagram");
+  await page.locator(".composer textarea").press("Enter");
+
+  // Verify attachment preview clears from composer
+  await expect(preview).not.toBeVisible();
+
+  // 4. Verify user message bubble renders attachment card with thumbnail
+  const userMsg = page.locator(".msg.user");
+  await expect(userMsg).toBeVisible();
+  const attachmentCard = userMsg.locator(".msg-attachment-card");
+  await expect(attachmentCard).toBeVisible();
+  await expect(attachmentCard.locator(".msg-attachment-thumb")).toBeVisible();
+  await expect(attachmentCard.locator(".msg-attachment-name")).toHaveText("diagram.png");
+
+  // Verify message text doesn't display raw bracket metadata
+  const msgBody = userMsg.locator("pre");
+  await expect(msgBody).toHaveText("Analyze this architecture diagram");
+
+  // 5. Click the image card thumbnail to open lightbox modal
+  await attachmentCard.locator(".msg-attachment-thumb-btn").click();
+  const lightbox = page.locator(".image-lightbox-scrim");
+  await expect(lightbox).toBeVisible();
+  await expect(lightbox.locator(".image-lightbox-img")).toBeVisible();
+
+  // Close lightbox modal
+  const closeBtn = lightbox.locator(".image-lightbox-close");
+  await expect(closeBtn).toBeVisible();
+  await closeBtn.click();
+  await expect(lightbox).not.toBeVisible();
+
+  // 6. Accessibility check
+  const axe = await new AxeBuilder({ page }).include(".composer").include(".msg.user").analyze();
+  expect(axe.violations).toEqual([]);
+});
