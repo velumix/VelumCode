@@ -257,7 +257,11 @@ impl View {
                         } else {
                             command.clone()
                         },
-                        detail: if command.is_empty() { None } else { Some(command.clone()) },
+                        detail: if command.is_empty() {
+                            None
+                        } else {
+                            Some(command.clone())
+                        },
                     });
                 }
                 let output = item

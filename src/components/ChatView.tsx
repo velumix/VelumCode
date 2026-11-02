@@ -27,6 +27,8 @@ import { ClientMeasurement, type HostMeasurement } from '../turnMeasurement';
 import { attachment, chatSnapshot, type AccessCheck, type Diagnostics } from '../context';
 import SessionDashboard from './SessionDashboard';
 import { parseStatus } from './gitStatus';
+import SkillPicker from './SkillPicker';
+import type { InstalledSkill } from '../skills';
 const ContextPanel = lazy(() => import('./ContextPanel'));
 
 export type AgentStatus = (
@@ -81,9 +83,10 @@ interface AgentEventEnvelope {
 }
 
 interface NewInfo {
-  live?: { revision: number; running: boolean; yolo: boolean; terminal: boolean; queue: Queue } | null;
+  live?: { revision: number; running: boolean; yolo: boolean; terminal: boolean; skill_ids?: string[]; queue: Queue } | null;
   id: string;
   session_id: string;
+  skill_ids?: string[];
   workspace: string;
   workspace_notice?: string | null;
   restored?: AgentEventEnvelope["event"][];
@@ -96,6 +99,10 @@ interface ChatViewProps {
   onCloseContinuedTerminal?: () => Promise<void>;
   botId?: string;
   taskId?: string;
+  skills: InstalledSkill[];
+  skillIds: string[];
+  onSkillsChange: (ids: string[]) => void;
+  onManageSkills: () => void;
   onPluginHandle: (id: string, handle: PluginChatHandle | null) => void;
   onRemember: (text:string)=>void;
   initialWorkspace?: string;
@@ -454,7 +461,7 @@ function ToolBlock({ block }: { block: Extract<Block, { kind: "tool" }> }) {
   );
 }
 
-export default function ChatView({ provider, options, initialWorkspace, sessionId, active, sessionKey, onStatus, onWorkspace, onTitle, onRemember, onPluginHandle, botId, taskId, terminalOwnsConversation: terminalFromParent = false, onContinueInTerminal, onCloseContinuedTerminal }: ChatViewProps) {
+export default function ChatView({ provider, options, initialWorkspace, sessionId, active, sessionKey, onStatus, onWorkspace, onTitle, onRemember, onPluginHandle, botId, taskId, skills, skillIds, onSkillsChange, onManageSkills, terminalOwnsConversation: terminalFromParent = false, onContinueInTerminal, onCloseContinuedTerminal }: ChatViewProps) {
   const [attachedTerminal, setAttachedTerminal] = useState(false);
   const terminalOwnsConversation = terminalFromParent || attachedTerminal;
   const { settings } = usePreferences();
@@ -465,6 +472,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
   const botPopoverRef = useRef<HTMLDivElement>(null);
   const [contextSnapshot, setContextSnapshot] = useState<string | null>(null);
   const optionsRef = useRef(options); optionsRef.current = options;
+  const skillIdsRef = useRef(skillIds); skillIdsRef.current = skillIds;
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [todos, setTodos] = useState<TodoEntry[]>([]);
   const [input, setInput] = useState("");
@@ -1075,7 +1083,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
         // The listener above filters by session id; register after attaching
         // so no event from our own session can slip past.
         if (disposed) return;
-        const info = await invoke<NewInfo>("agent_new", { id: nativeId, workspace, tabId: sessionId, provider, options: optionsRef.current, resume: !restarting, botId:botId||null,taskId:taskId||null });
+        const info = await invoke<NewInfo>("agent_new", { id: nativeId, workspace, tabId: sessionId, provider, options: optionsRef.current, resume: !restarting, botId:botId||null,taskId:taskId||null,skillIds:skillIdsRef.current });
         nativeId = info.id || nativeId;
         if (!disposed) {
           replaying = true;
@@ -1089,6 +1097,9 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
           nativeIdRef.current = nativeId;
           setAttachedTerminal(!!info.live?.terminal);
           if (info.live) { yoloRef.current = info.live.yolo; setYolo(info.live.yolo); }
+          // Adopt the native selection (bot defaults on a fresh session, the
+          // live selection after a WebView reload) so the picker shows truth.
+          if (Array.isArray(info.skill_ids) && JSON.stringify(info.skill_ids) !== JSON.stringify(skillIdsRef.current)) onSkillsChange(info.skill_ids);
           else await invoke('agent_set_permissions', {id:nativeId,yolo:yoloRef.current});
           if (disposed) return;
           setEffective(info.workspace);
@@ -1937,6 +1948,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
         }} aria-pressed={yolo} aria-label="YOLO mode" title={yolo ? "YOLO is on: turns skip approvals and sandboxing" : "Turn on YOLO: skip approvals and sandboxing"}>
           {yolo ? <YoloIcon /> : <Icon name="shield" size={16} />}<span>{yolo ? "YOLO on" : "Standard"}</span>
         </button>
+        <SkillPicker skills={skills} skillIds={skillIds} onChange={onSkillsChange} onManage={onManageSkills} disabled={!ready} />
         <span className="composer-hint">
           {input.length > 200 ? (
             <span className={`composer-char-count${input.length > 50000 ? " near-limit" : ""}`}>

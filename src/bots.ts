@@ -20,6 +20,7 @@ export interface BotProfile extends BotIdentity {
   automatic: boolean;
   allow_handoffs: boolean;
   max_minutes: number;
+  skill_ids: string[];
   revision: string;
 }
 export interface BotView {
@@ -107,6 +108,7 @@ export function newBot(provider: Provider, options: RunOptions): BotProfile {
     automatic: true,
     allow_handoffs: true,
     max_minutes: 20,
+    skill_ids: [],
     revision: "",
   };
 }
@@ -160,6 +162,7 @@ export function duplicateBot(bot: BotProfile): BotProfile {
     id: crypto.randomUUID(),
     name: `${name} copy`,
     options: { ...bot.options },
+    skill_ids: [...(bot.skill_ids || [])],
     revision: "",
     automatic: false,
   };

@@ -2,13 +2,13 @@
 //! Provider streams share one event vocabulary for desktop, phone and notifications.
 //! Resume IDs come from the selected CLI; stderr is drained concurrently.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
 };
-use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::child_process::{self, SharedChild};
@@ -36,6 +36,7 @@ pub struct AgentSession {
     session_id: Mutex<String>,
     provider: Provider,
     options: Mutex<RunOptions>,
+    skill_ids: Mutex<Vec<String>>,
     memory: Mutex<crate::memory::Session>,
     workspace: std::path::PathBuf,
     child: Mutex<Option<Arc<SharedChild>>>,
@@ -411,6 +412,7 @@ pub struct NewInfo {
     pub bot: Option<crate::bots::Identity>,
     pub id: String,
     pub session_id: String,
+    pub skill_ids: Vec<String>,
     pub workspace: String,
     pub workspace_notice: Option<String>,
     pub restored: Vec<AgentEvent>,
@@ -423,6 +425,7 @@ pub struct LiveInfo {
     running: bool,
     yolo: bool,
     terminal: bool,
+    skill_ids: Vec<String>,
     queue: crate::message_queue::Snapshot,
 }
 
@@ -1556,6 +1559,7 @@ pub fn agent_new(
     resume: Option<bool>,
     bot_id: Option<String>,
     task_id: Option<String>,
+    skill_ids: Option<Vec<String>>,
 ) -> Result<NewInfo, String> {
     let state = app.state::<AgentState>();
     let workspace = resolve_workspace(workspace)?;
@@ -1564,6 +1568,13 @@ pub fn agent_new(
         .as_ref()
         .and_then(|id| app.state::<crate::bots::Store>().get(id).ok());
     let bot_id = bot.as_ref().map(|b| b.id.clone());
+    // An explicit selection (including an empty one) wins; otherwise new
+    // conversations start from the bot's default skills.
+    let skill_ids = crate::skills::sanitize_selection(skill_ids.unwrap_or_else(|| {
+        bot.as_ref()
+            .map(|b| b.skill_ids.clone())
+            .unwrap_or_default()
+    }));
     let options = options.unwrap_or_default();
     options.validate(provider)?;
     let tab_id = tab_id.unwrap_or_else(|| id.clone());
@@ -1591,17 +1602,20 @@ pub fn agent_new(
             {
                 let session_id = live.session_id.lock().unwrap().clone();
                 let yolo = live.access.lock().unwrap().requested;
+                let live_skills = live.skill_ids.lock().unwrap().clone();
                 return Ok(NewInfo {
                     live: Some(LiveInfo {
                         revision: replay.session.revision,
                         running: replay.session.running,
                         yolo,
                         terminal: state.terminal_owns(live),
+                        skill_ids: live_skills.clone(),
                         queue: replay.session.queue,
                     }),
                     bot: live.bot_identity.lock().unwrap().clone(),
                     id: live_id.clone(),
                     session_id,
+                    skill_ids: live_skills,
                     workspace: workspace.display().to_string(),
                     workspace_notice: None,
                     restored: replay.events.into_iter().map(|entry| entry.event).collect(),
@@ -1648,6 +1662,7 @@ pub fn agent_new(
                 session_id: Mutex::new(session_id.clone()),
                 provider,
                 options: Mutex::new(options.clone()),
+                skill_ids: Mutex::new(skill_ids.clone()),
                 memory: Mutex::new(crate::memory::Session::default()),
                 workspace: workspace.clone(),
                 child: Mutex::new(None),
@@ -1701,6 +1716,7 @@ pub fn agent_new(
         bot: bot.map(|p| p.identity()),
         id,
         session_id,
+        skill_ids,
         workspace: workspace.display().to_string(),
         workspace_notice: crate::workspace_access::project_required(&workspace, provider, false)
             .then(|| crate::workspace_access::PROFILE_ROOT_GUIDANCE.into()),
@@ -1780,6 +1796,33 @@ pub fn agent_configure(
     options: RunOptions,
 ) -> Result<(), String> {
     configure_session(&app, &state, &tab_id, options, true)
+}
+
+/// Replace a conversation's skill selection. Skills are read fresh at the
+/// start of each turn, so unlike model changes this is safe mid-conversation
+/// and simply applies from the next turn. Before the native session exists
+/// the tab's saved selection still wins, because `agent_new` receives it.
+#[tauri::command]
+pub fn agent_configure_skills(
+    app: AppHandle,
+    state: State<AgentState>,
+    tab_id: String,
+    skill_ids: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let skill_ids = crate::skills::sanitize_selection(skill_ids);
+    let sessions = state
+        .sessions
+        .lock()
+        .map_err(|_| "Agent state unavailable.")?;
+    if let Some((_, session)) = configuration_target(&sessions, &tab_id, true) {
+        *session.skill_ids.lock().unwrap() = skill_ids.clone();
+        let _ = app.emit(
+            "agent-skills",
+            serde_json::json!({"tab_id": tab_id, "skill_ids": skill_ids}),
+        );
+        crate::remote::changed(&app);
+    }
+    Ok(skill_ids)
 }
 
 /// Run one prompt against the tab's provider and conversation.
@@ -1877,11 +1920,14 @@ pub struct AttachmentInfo {
 pub fn decode_base64(input: &str) -> Result<Vec<u8>, String> {
     let clean: String = input.chars().filter(|c| !c.is_whitespace()).collect();
     let mut table = [0xFFu8; 256];
-    for (i, &b) in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".iter().enumerate() {
+    for (i, &b) in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        .iter()
+        .enumerate()
+    {
         table[b as usize] = i as u8;
     }
     let bytes = clean.as_bytes();
-    if bytes.is_empty() || bytes.len() % 4 != 0 {
+    if bytes.is_empty() || !bytes.len().is_multiple_of(4) {
         return Err("Invalid base64 payload length.".into());
     }
     let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
@@ -1963,12 +2009,18 @@ pub fn agent_save_attachment(
         } else {
             let temp_dir = std::env::temp_dir().join("velum-code-attachments");
             let _ = std::fs::create_dir_all(&temp_dir);
-            (temp_dir.clone(), temp_dir.join(&safe_filename).to_string_lossy().to_string())
+            (
+                temp_dir.clone(),
+                temp_dir.join(&safe_filename).to_string_lossy().to_string(),
+            )
         }
     } else {
         let temp_dir = std::env::temp_dir().join("velum-code-attachments");
         let _ = std::fs::create_dir_all(&temp_dir);
-        (temp_dir.clone(), temp_dir.join(&safe_filename).to_string_lossy().to_string())
+        (
+            temp_dir.clone(),
+            temp_dir.join(&safe_filename).to_string_lossy().to_string(),
+        )
     };
 
     let file_path = dir.join(&safe_filename);
@@ -2206,11 +2258,33 @@ fn send_inner(
     } else {
         None
     };
+    let skills_block = if check_access {
+        String::new()
+    } else {
+        let ids = session.skill_ids.lock().unwrap().clone();
+        if ids.is_empty() {
+            String::new()
+        } else {
+            let context = app.state::<crate::skills::SkillState>().context(&ids);
+            if !context.skipped.is_empty() {
+                emit(
+                    &app,
+                    &id,
+                    AgentEvent::Notice {
+                        text: format!(
+                            "Skills not applied this turn: {}. Open Skills to review your selection.",
+                            context.skipped.join("; ")
+                        ),
+                    },
+                );
+            }
+            context.block
+        }
+    };
     let options = session.options.lock().unwrap().clone();
     if let Some(prefix) = prepared.strip_suffix(&prompt) {
-        if !prefix.ends_with("Current request:\n") {
-            prepared = format!("{prefix}Current request:\n{prompt}");
-        }
+        let prefix = prefix.strip_suffix("Current request:\n").unwrap_or(prefix);
+        prepared = format!("{prefix}{skills_block}Current request:\n{prompt}");
     }
     let source = if managed {
         "scheduler"
@@ -2615,6 +2689,7 @@ mod tests {
                 session_id: Mutex::new(String::new()),
                 provider: Provider::Codex,
                 options: Mutex::new(RunOptions::default()),
+                skill_ids: Mutex::new(Vec::new()),
                 memory: Mutex::new(Default::default()),
                 workspace,
                 child: Mutex::new(None),
@@ -2667,6 +2742,7 @@ mod tests {
                 session_id: Mutex::new(String::new()),
                 provider: Provider::Muse,
                 options: Mutex::new(RunOptions::default()),
+                skill_ids: Mutex::new(Vec::new()),
                 memory: Mutex::new(Default::default()),
                 workspace: workspace.clone(),
                 child: Mutex::new(None),

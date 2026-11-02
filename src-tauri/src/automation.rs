@@ -703,6 +703,7 @@ fn start(app: &tauri::AppHandle, id: &str, manual: bool) -> Result<(), String> {
             Some(false),
             Some(profile.id),
             Some(card.id.clone()),
+            None,
         )?;
         crate::runner::agent_send(
             app.clone(),

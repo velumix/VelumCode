@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 
-export type IconName = "board" | "search" | "plus" | "chat" | "folder" | "code" | "branch" | "terminal" | "arrow" | "down" | "chevron" | "reset" | "command" | "check" | "copy" | "close" | "shield" | "bell" | "phone" | "memory" | "settings" | "edit" | "bug" | "sparkles" | "split" | "diff" | "github" | "pr" | "issue" | "star" | "bot" | "image";
+export type IconName = "board" | "search" | "plus" | "chat" | "folder" | "code" | "branch" | "terminal" | "arrow" | "down" | "chevron" | "reset" | "command" | "check" | "copy" | "close" | "shield" | "bell" | "phone" | "memory" | "settings" | "edit" | "bug" | "sparkles" | "split" | "diff" | "github" | "pr" | "issue" | "star" | "bot" | "image" | "layers";
 
 const paths: Record<IconName, string> = {
   image: "M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5Zm6 5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Zm12 6-5-5-8 8",
@@ -35,6 +35,7 @@ const paths: Record<IconName, string> = {
   close: "m6 6 12 12M18 6 6 18",
   shield: "m12 3 8 4v5c0 5-8 9-8 9s-8-4-8-9V7l8-4Zm-3 9 2 2 4-4",
   bell: "M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9Zm-8 12a2 2 0 0 0 4 0",
+  layers: "m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5m-18 4 9 5 9-5",
 };
 
 export default function Icon({ name, size = 18, className, style }: { name: IconName; size?: number; className?: string; style?: CSSProperties }) {

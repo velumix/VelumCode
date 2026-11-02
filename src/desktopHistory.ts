@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 export interface SavedTab {
   bot_id?: string;
   task_id?: string;
+  skill_ids?: string[];
   id: string;
   title: string;
   workspace?: string;
@@ -102,6 +103,7 @@ function parseDesktop(value: { tabs?: SavedTab[]; activeId?: string } | null): D
       .map((t: SavedTab) => ({
         bot_id:typeof t.bot_id==='string'&&/^[a-f0-9-]{36}$/i.test(t.bot_id)?t.bot_id:undefined,
         task_id:typeof t.task_id==='string'&&/^[a-f0-9-]{36}$/i.test(t.task_id)?t.task_id:undefined,
+        skill_ids:Array.isArray(t.skill_ids)?[...new Set(t.skill_ids.filter((id): id is string => typeof id==='string'&&/^[a-z][a-z0-9.-]{2,63}$/.test(id)&&!id.includes('..')&&!id.endsWith('.')))].slice(0,8):undefined,
         id: t.id,
         title: t.title,
         workspace: t.workspace,
@@ -132,8 +134,8 @@ export function loadDesktop(): DesktopSnapshot {
 }
 export function saveDesktop(tabs: SavedTab[], activeId: string) {
   const desktop = {
-    tabs: tabs.map(({ id, title, workspace, provider, options,bot_id,task_id }) => ({
-      bot_id,task_id,
+    tabs: tabs.map(({ id, title, workspace, provider, options,bot_id,task_id,skill_ids }) => ({
+      bot_id,task_id,skill_ids:skill_ids?.length?skill_ids:undefined,
       id,
       title,
       workspace,

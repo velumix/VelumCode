@@ -28,11 +28,13 @@ import type {ModelCatalog} from './providers';
 const BotsPanel=lazy(()=>import('./components/BotsPanel'));
 const MemoryPanel = lazy(() => import("./components/MemoryPanel"));
 const PluginPanel = lazy(() => import("./components/PluginPanel"));
+const SkillsPanel = lazy(() => import("./components/SkillsPanel"));
 const KanbanPanel = lazy(() => import("./components/KanbanPanel"));
 const GitPanel = lazy(() => import("./components/GitPanel"));
 import { taskPrompt, type Board, type Card } from "./kanban";
 import type { PluginSelection } from "./components/PluginPanel";
 import type { InstalledPlugin, PluginChatHandle } from "./plugins";
+import type { InstalledSkill } from "./skills";
 import { loadDesktop, saveDesktop, saveDraft, recoveryError } from "./desktopHistory";
 import { finishStartup } from "./startup";
 import { useUpdates, checkForUpdates, downloadUpdate, restartToUpdate } from "./updates";
@@ -45,6 +47,7 @@ interface DesktopStatus { notifications_enabled: boolean; last_error: string | n
 interface Tab {
   bot_id?: string;
   task_id?: string;
+  skill_ids?: string[];
   options: RunOptions;
   provider: Provider;
   id: string;
@@ -70,7 +73,7 @@ function newProvider(): Provider {
   return provider === "last" ? preferredProvider() : provider;
 }
 function createTab(n: number, provider = newProvider()): Tab {
-  return { provider, options: preferredOptions(provider), id: newId(), title: `New conversation ${n}`, mode: "agent", agentStatus: { kind: "starting" }, terminalStatus: { kind: "starting" }, agentKey: 0, terminalKey: 0, terminalStarted: false };
+  return { provider, options: preferredOptions(provider), skill_ids: [], id: newId(), title: `New conversation ${n}`, mode: "agent", agentStatus: { kind: "starting" }, terminalStatus: { kind: "starting" }, agentKey: 0, terminalKey: 0, terminalStarted: false };
 }
 
 function tabStatus(tab: Tab): PtyStatus | AgentStatus {
@@ -198,6 +201,8 @@ export default function App() {
   useEffect(()=>{void refreshBots().catch(()=>{});const registration=listen('bots-changed',()=>void refreshBots().catch(()=>{}));return()=>{void registration.then(off=>off());};},[refreshBots]);
   const [plugins, setPlugins] = useState<InstalledPlugin[]>([]);
   const [pluginPanel, setPluginPanel] = useState<{ selection?: PluginSelection } | null>(null);
+  const [skills, setSkills] = useState<InstalledSkill[]>([]);
+  const [skillPanel, setSkillPanel] = useState(false);
   const [memory, setMemory] = useState<{workspace:string;seed?:string;bot_id?:string;initialFilter?:'active'|'pending'}|null>(null);
   const [guidanceReviewCount, setGuidanceReviewCount] = useState(0);
   const [boardWorkspace, setBoardWorkspace] = useState<string | null>(null);
@@ -226,7 +231,7 @@ export default function App() {
 
   const counter = useRef(1);
   useEffect(()=>{const registration=listen<{tab_id:string;bot:BotProfile;workspace:string}>('bot-chat-open',({payload})=>{
-    setTabs(tabs=>{if(tabs.length>=32||tabs.some(t=>t.id===payload.tab_id))return tabs;return [...tabs,{...createTab(++counter.current,payload.bot.provider),id:payload.tab_id,bot_id:payload.bot.id,title:payload.bot.name,options:payload.bot.options,workspace:payload.workspace}];});
+    setTabs(tabs=>{if(tabs.length>=32||tabs.some(t=>t.id===payload.tab_id))return tabs;return [...tabs,{...createTab(++counter.current,payload.bot.provider),id:payload.tab_id,bot_id:payload.bot.id,title:payload.bot.name,options:payload.bot.options,skill_ids:[...(payload.bot.skill_ids||[])],workspace:payload.workspace}];});
   });return()=>{void registration.then(off=>off());};},[]);
   const handlesRef = useRef(new Map<string, TerminalHandles>());
   const pluginHandles = useRef(new Map<string, PluginChatHandle>());
@@ -235,9 +240,22 @@ export default function App() {
   }, []);
   const refreshPlugins = useCallback(async () => setPlugins(await invoke<InstalledPlugin[]>("plugins_list") || []), []);
   useEffect(() => { void refreshPlugins().catch(e => setDesktopMessage({ text: `Could not load plugins: ${String(e)}`, error: true })); }, [refreshPlugins]);
+  const refreshSkills = useCallback(async () => setSkills(await invoke<InstalledSkill[]>("skills_list") || []), []);
+  useEffect(() => { void refreshSkills().catch(e => setDesktopMessage({ text: `Could not load skills: ${String(e)}`, error: true })); }, [refreshSkills]);
+  const setTabSkills = useCallback((tabId: string, ids: string[]) => {
+    setTabs(prev => prev.map(t => t.id === tabId ? { ...t, skill_ids: ids } : t));
+    void invoke<string[]>("agent_configure_skills", { tabId, skillIds: ids })
+      .then(final => setTabs(prev => prev.map(t => t.id === tabId && JSON.stringify(t.skill_ids || []) !== JSON.stringify(final) ? { ...t, skill_ids: final } : t)))
+      .catch(e => setDesktopMessage({ text: `Could not update skills: ${String(e)}`, error: true }));
+  }, []);
   // Render-committed snapshot so global shortcut handlers never go stale.
   const stateRef = useRef({ tabs, activeId });
   stateRef.current = { tabs, activeId };
+  const toggleTabSkill = useCallback((tabId: string, id: string, on: boolean) => {
+    const tab = stateRef.current.tabs.find(t => t.id === tabId);
+    const current = tab?.skill_ids || [];
+    setTabSkills(tabId, on ? [...current.filter(s => s !== id), id] : current.filter(s => s !== id));
+  }, [setTabSkills]);
   useEffect(() => {
     try { saveDesktop(tabs, activeId); } catch { setDesktopMessage({ text: "Could not save your open conversations. Check available disk space before quitting.", error: true }); }
   }, [tabs, activeId]);
@@ -344,10 +362,14 @@ export default function App() {
     try { localStorage.setItem("velum-provider", provider); } catch { /* Storage is optional. */ }
     const t = createTab(++counter.current, provider);
     t.workspace = stateRef.current.tabs.find((tab) => tab.id === stateRef.current.activeId)?.workspace;
-    if(keepBot)t.bot_id=stateRef.current.tabs.find(tab=>tab.id===stateRef.current.activeId)?.bot_id;
+    if(keepBot){
+      t.bot_id=stateRef.current.tabs.find(tab=>tab.id===stateRef.current.activeId)?.bot_id;
+      const bot=bots.find(b=>b.id===t.bot_id);
+      t.skill_ids=bot?[...(bot.skill_ids||[])]:[...(stateRef.current.tabs.find(tab=>tab.id===stateRef.current.activeId)?.skill_ids||[])];
+    }
     setTabs((prev) => [...prev, t]);
     setActiveId(t.id);
-  }, []);
+  }, [bots]);
 
   const newTab = useCallback(() => {
     openProvider(newProvider());
@@ -361,6 +383,7 @@ export default function App() {
     const prov = (targetBot.provider || active?.provider || 'muse') as Provider;
     const tab = createTab(++counter.current, prov);
     tab.bot_id = targetBot.id;
+    tab.skill_ids = [...(bots.find(b=>b.id===targetBot.id)?.skill_ids || active?.skill_ids || [])];
     tab.options = { ...(targetBot.options || active?.options || { model: '', reasoning: '' }) };
     tab.workspace = active?.workspace;
     tab.title = targetBot.name;
@@ -387,6 +410,7 @@ export default function App() {
     const active = stateRef.current.tabs.find(t => t.id === stateRef.current.activeId);
     const tab = createTab(++counter.current, bot.provider);
     tab.bot_id = bot.id;
+    tab.skill_ids = [...(bot.skill_ids || [])];
     tab.options = { ...bot.options };
     tab.workspace = active?.workspace;
     tab.title = bot.name;
@@ -401,7 +425,7 @@ export default function App() {
     tab.workspace = boardWorkspace || active?.workspace;
     tab.options = active?.options || tab.options;
     const bot=bots.find(b=>b.id===card.assignment?.bot_id);
-    if(bot){tab.bot_id=bot.id;tab.provider=bot.provider;tab.options=bot.options;tab.task_id=card.id;}else{tab.bot_id=active?.bot_id;}
+    if(bot){tab.bot_id=bot.id;tab.provider=bot.provider;tab.options=bot.options;tab.skill_ids=[...(bot.skill_ids||[])];tab.task_id=card.id;}else{tab.bot_id=active?.bot_id;tab.skill_ids=[...(active?.skill_ids||[])];}
     tab.title = card.title;
     saveDraft(tab.id, taskPrompt(card));
     setTabs(tabs=>[...tabs,tab]); setActiveId(tab.id); setBoardWorkspace(null);
@@ -622,6 +646,8 @@ export default function App() {
     { id: "cmd-github", title: "Open GitHub Hub: pull requests, issues, and repository", icon: "github", run: () => { if(activeTab?.workspace) { setGitInitialMode("github"); setGitWorkspace(activeTab.workspace); } } },
     { id: "cmd-plugins", title: "Manage plugins", icon: "sparkles", run: () => setPluginPanel({}) },
     ...plugins.filter(p => p.enabled).flatMap(p => p.manifest.commands.map(c => ({ id: `plugin-${p.manifest.id}-${c.id}`, title: `${c.title} · ${p.manifest.name}`, icon: "sparkles" as const, run: () => setPluginPanel({ selection: { id: p.manifest.id, command: c.id } }) }))),
+    { id: "cmd-skills", title: "Manage skills: browse, install, and write instruction packs", icon: "layers", run: () => setSkillPanel(true) },
+    ...skills.filter(s => s.enabled).map(s => ({ id: `skill-toggle-${s.manifest.id}`, title: `${(activeTab?.skill_ids || []).includes(s.manifest.id) ? "Skill on ✓" : "Skill off"} for this chat: ${s.manifest.name}`, icon: "layers" as const, run: () => { if (activeTab) toggleTabSkill(activeTab.id, s.manifest.id, !(activeTab.skill_ids || []).includes(s.manifest.id)); } })),
     { id:"cmd-memory", title:"Open project memory vault", icon: "memory", run:()=>{ if(activeTab?.workspace)setMemory({workspace:activeTab.workspace}); } },
     { id: "cmd-remote", title: "Connect your phone with Tailscale or USB", icon: "phone", run: () => setRemoteOpen(true) },
     { id: "cmd-new", title: "New agent tab", hint: "Ctrl+T", icon: "plus", run: newTab },
@@ -788,7 +814,7 @@ export default function App() {
         </div>
       )}
       <div className="app-body">
-      <TabBar tabs={tabs.map((t) => ({ ...t, bot:bots.find(b=>b.id===t.bot_id),model:t.options.model,mode:t.mode,status: tabStatus(t) }))} activeId={activeTab?.id ?? ""} onSelect={selectTab} onClose={closeTab} onNew={newTab} onCommands={togglePalette} onSettings={() => setSettingsOpen(true)} onBots={()=>setBotPanel('manage')} onPlugins={() => setPluginPanel({})} onKanban={()=>{if(activeTab?.workspace)setBoardWorkspace(activeTab.workspace);}} workspace={activeTab?.workspace} />
+      <TabBar tabs={tabs.map((t) => ({ ...t, bot:bots.find(b=>b.id===t.bot_id),model:t.options.model,mode:t.mode,status: tabStatus(t) }))} activeId={activeTab?.id ?? ""} onSelect={selectTab} onClose={closeTab} onNew={newTab} onCommands={togglePalette} onSettings={() => setSettingsOpen(true)} onBots={()=>setBotPanel('manage')} onPlugins={() => setPluginPanel({})} onSkills={() => setSkillPanel(true)} onKanban={()=>{if(activeTab?.workspace)setBoardWorkspace(activeTab.workspace);}} workspace={activeTab?.workspace} />
       <main className="conversation-pane" aria-label="Current conversation">
       <div className="conversation-toolbar">
         <div className="conversation-heading">
@@ -828,6 +854,10 @@ export default function App() {
               provider={t.provider}
               botId={t.bot_id}
               taskId={t.task_id}
+              skills={skills}
+              skillIds={t.skill_ids || []}
+              onSkillsChange={(ids) => setTabSkills(t.id, ids)}
+              onManageSkills={() => setSkillPanel(true)}
               options={t.options}
               initialWorkspace={t.workspace}
               onRemember={(seed)=>{if(t.workspace)setMemory({workspace:t.workspace,seed,bot_id:t.bot_id});}}
@@ -909,8 +939,9 @@ export default function App() {
       {boardWorkspace && <Suspense fallback={null}><KanbanPanel workspace={boardWorkspace} bots={bots} previewSchedule={(cron,timezone)=>invoke('automation_request',{request:{action:'preview',cron,timezone}})} request={request=>invoke<Board>("kanban_request",{workspace:boardWorkspace,request})} onClose={()=>setBoardWorkspace(null)} onWork={workOnCard}/></Suspense>}
       {gitWorkspace && <Suspense fallback={null}><GitPanel workspace={gitWorkspace} initialViewMode={gitInitialMode} onClose={()=>{setGitWorkspace(null);setGitTick((t)=>t+1);}} /></Suspense>}
       {pluginPanel && <Suspense fallback={null}><PluginPanel plugins={plugins} selection={pluginPanel.selection} onClose={() => setPluginPanel(null)} onRefresh={refreshPlugins} workspace={activeTab?.workspace || ""} messages={() => pluginHandles.current.get(activeTab?.id)?.messages() || []} onInsert={text => { pluginHandles.current.get(activeTab?.id)?.insert(text); focusComposer(); }} /></Suspense>}
+      {skillPanel && <Suspense fallback={null}><SkillsPanel skills={skills} activeSkillIds={activeTab?.skill_ids || []} onToggleSkill={activeTab ? (id, on) => toggleTabSkill(activeTab.id, id, on) : undefined} onRefresh={refreshSkills} onClose={() => setSkillPanel(false)} /></Suspense>}
       {memory&&<Suspense fallback={null}><MemoryPanel initialFilter={memory.initialFilter} ownerName={bots.find(b=>b.id===memory.bot_id)?.name} seed={memory.seed} onClose={()=>setMemory(null)} request={(request)=>invoke<MemoryView>(memory.bot_id?'bots_memory':'memory_request',{workspace:memory.workspace,request,id:memory.bot_id})} openVault={()=>memory.bot_id?invoke('bots_open',{id:memory.bot_id,memory:true}):invoke("memory_open")}/></Suspense>}
-      {botPanel&&<Suspense fallback={null}><BotsPanel initialRunSessionId={botRunTarget} renderInteractions={id => <DesktopInteractions key={id} sessionId={id}/>} initialPage={botPanel==='activity'?'activity':'profiles'} openMemory={id=>invoke('bots_open',{id,memory:true})} workspace={activeTab?.workspace||''} provider={activeTab?.provider||'muse'} options={activeTab?.options||{model:'',reasoning:''}} request={request=>invoke<BotView>('bots_request',{request})} automation={request=>invoke('automation_request',{request})} memory={(id,request)=>invoke<MemoryView>('bots_memory',{id,workspace:activeTab?.workspace||'',request})} loadModels={(provider,refresh)=>invoke<ModelCatalog>('provider_models',{provider,refresh})} openFolder={id=>invoke('bots_open',{id})} onClose={()=>{setBotPanel(null);setBotRunTarget(undefined);}} chatLabel={botPanel==='handoff'?'Hand off':'Chat'} onChat={openBot} onChange={()=>void refreshBots()}/></Suspense>}
+      {botPanel&&<Suspense fallback={null}><BotsPanel initialRunSessionId={botRunTarget} renderInteractions={id => <DesktopInteractions key={id} sessionId={id}/>} initialPage={botPanel==='activity'?'activity':'profiles'} openMemory={id=>invoke('bots_open',{id,memory:true})} workspace={activeTab?.workspace||''} provider={activeTab?.provider||'muse'} options={activeTab?.options||{model:'',reasoning:''}} request={request=>invoke<BotView>('bots_request',{request})} automation={request=>invoke('automation_request',{request})} memory={(id,request)=>invoke<MemoryView>('bots_memory',{id,workspace:activeTab?.workspace||'',request})} loadModels={(provider,refresh)=>invoke<ModelCatalog>('provider_models',{provider,refresh})} openFolder={id=>invoke('bots_open',{id})} onClose={()=>{setBotPanel(null);setBotRunTarget(undefined);}} chatLabel={botPanel==='handoff'?'Hand off':'Chat'} onChat={openBot} onChange={()=>void refreshBots()} skills={skills}/></Suspense>}
     </div>
   );
 }

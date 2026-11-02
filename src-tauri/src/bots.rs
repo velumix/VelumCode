@@ -31,6 +31,10 @@ pub struct Profile {
     pub automatic: bool,
     pub allow_handoffs: bool,
     pub max_minutes: u32,
+    /// Skills new conversations with this bot start with; users can still
+    /// change the selection per conversation.
+    #[serde(default)]
+    pub skill_ids: Vec<String>,
     #[serde(default)]
     pub revision: String,
 }
@@ -50,7 +54,11 @@ impl Profile {
             name: self.name.clone(),
             avatar: self.avatar.clone(),
             color: self.color.clone(),
-            role: if self.role.is_empty() { None } else { Some(self.role.clone()) },
+            role: if self.role.is_empty() {
+                None
+            } else {
+                Some(self.role.clone())
+            },
         }
     }
 }
@@ -140,6 +148,16 @@ fn validate(p: &Profile) -> Result<(), String> {
     }
     if ![1000, 3000, 8000].contains(&p.memory_budget) || !(1..=120).contains(&p.max_minutes) {
         return Err("Choose a supported memory budget and a run limit of 1–120 minutes.".into());
+    }
+    if p.skill_ids.len() > crate::skills::MAX_PER_CHAT
+        || p.skill_ids.iter().any(|id| !crate::skills::valid_id(id))
+        || p.skill_ids
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != p.skill_ids.len()
+    {
+        return Err("Choose up to 8 default skills.".into());
     }
     crate::automation::next_due(&p.default_cron, &p.timezone, crate::automation::now())?;
     Ok(())
@@ -384,6 +402,7 @@ mod tests {
             automatic: false,
             allow_handoffs: true,
             max_minutes: 20,
+            skill_ids: vec!["velum.review-checklist".into()],
             revision: String::new(),
         }
     }

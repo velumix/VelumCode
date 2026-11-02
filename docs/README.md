@@ -22,6 +22,7 @@
 | [Bots](bots.md) | Profiles, private memory, schedules and handoffs |
 | [Kanban](kanban.md) | Tasks, prerequisites, assignments and recovery |
 | [Plugins](plugins.md) | Directory, permissions, installation and SDK |
+| [Skills](skills.md) | Instruction packs, directory, per-chat picking and publishing |
 | [Remote access](remote-access.md) | Phone pairing, control/view-only access and revocation |
 | [Android](android.md) | APK installation, QR pairing and USB setup |
 

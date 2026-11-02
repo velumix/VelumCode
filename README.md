@@ -43,6 +43,7 @@ So I made it. **Velum Code is the app I built around that idea.** It started as 
 | **Keep what matters.** | A local Markdown memory vault, shared preferences, project notes, and selective recall with a strict context budget. Edit the same notes on desktop, phone, or in Obsidian. |
 | **Stay with the idea.** | Folded assistant controls, quiet activity summaries, and editable starters keep attention on creating. Correct a response and optionally save a reviewed project lesson. [Conversation guide](docs/conversation-experience.md). |
 | **Make it your own.** | A permission-based plugin system, command palette integration, and a small TypeScript SDK. Plugins run on demand in isolated workers. |
+| **Teach it your way.** | Skills are Markdown instruction packs you browse, install from GitHub, or write in the app, then switch per conversation or per bot. They work across Muse, Codex and Antigravity. [Skill guide](docs/skills.md). |
 | **A team with personality.** | Named bots with profile pictures, editable soul.md and agent.md, preferred models and reasoning, and private memory that follows them across providers. |
 | **Work that keeps moving.** | Kanban assignments create cron jobs. Bots update cards and hand off to teammates, with pause/stop controls and a clear activity history. |
 | **GitHub Hub & Workstation.** | Inspect pull requests, review issues, inspect per-file diffs with real line numbers, and bridge issues directly to Kanban. |
@@ -233,6 +234,14 @@ TypeScript builds, distribution, and limits. The SDK and working example are in 
 The [plugin directory](https://github.com/velumix/velum-code-plugins) handles submissions and generates the list shown in the app. No separate account or access token is needed in Velum.
 
 <p align="center"><a href="docs/images/plugin-directory.png"><img src="docs/images/plugin-directory.png" alt="Velum Code plugin directory with search, repository links and a Publish your plugin button" width="860" /></a><br /><sub><a href="docs/images/plugin-publish.png">Publish a plugin.</a> · <a href="docs/images/plugins.png">See Project tools in action.</a></sub></p>
+
+## Skills that travel with you
+
+Open **Skills** to browse the community directory, install any GitHub repository with a `SKILL.md`, or write your own instruction pack in the app. Read the full text before installing; installs pin the exact commit you reviewed. Turn skills on per conversation from the composer, or give a bot default skills for its chats and scheduled runs. [**Review checklist**](https://github.com/velumix/velum-skill-review-checklist) reviews changes for correctness, regressions, security and missing tests.
+
+Skills are instructions only: no code runs, and no tool permissions change. The agent follows a skill when its stated conditions match your request, across Muse, Codex and Antigravity. Up to 8 skills can be on at once within a 24 KB per-turn budget.
+
+Want to share one? The [skill guide](docs/skills.md) covers the format, local authoring, and publishing. The [skill directory](https://github.com/velumix/velum-code-skills) handles submissions and generates the list shown in the app, the same way plugins do. Existing Muse `SKILL.md` repositories install as-is when the file sits at the repository root.
 
 ## Reopen and carry on
 

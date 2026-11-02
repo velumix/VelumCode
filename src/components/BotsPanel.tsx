@@ -18,6 +18,7 @@ import {
   type ModelCatalog,
 } from "../providers";
 import BotAvatar from "./BotAvatar";
+import { MAX_SKILLS_PER_CHAT, type InstalledSkill } from "../skills";
 import ModelControls from "./ModelControls";
 import ScheduleFields from "./ScheduleFields";
 import Markdown from "./Markdown";
@@ -43,6 +44,7 @@ type Props = {
   readOnly?: boolean;
   initialPage?: "profiles" | "schedules" | "activity";
   openMemory?: (id: string) => Promise<void>;
+  skills?: InstalledSkill[];
 };
 export default function BotsPanel(props: Props) {
   const { request, automation, readOnly = false } = props;
@@ -489,6 +491,58 @@ export default function BotsPanel(props: Props) {
                       onChange={(e) => patch({ agent: e.target.value })}
                     />
                   </label>
+                  {props.skills && (
+                    <div>
+                      <span>
+                        Default skills{" "}
+                        <span className="bot-help">
+                          New chats and scheduled runs start with these on.
+                          They can still be changed per conversation.
+                        </span>
+                      </span>
+                      {!props.skills.filter((s) => s.enabled).length && (
+                        <p className="bot-help">
+                          No enabled skills yet. Add some from Skills in the
+                          sidebar.
+                        </p>
+                      )}
+                      {props.skills
+                        .filter((s) => s.enabled)
+                        .map((s) => {
+                          const on = (editor.skill_ids || []).includes(
+                            s.manifest.id,
+                          );
+                          const atCap =
+                            !on &&
+                            (editor.skill_ids || []).length >=
+                              MAX_SKILLS_PER_CHAT;
+                          return (
+                            <label className="bot-check" key={s.manifest.id}>
+                              <input
+                                type="checkbox"
+                                checked={on}
+                                disabled={readOnly || busy || atCap}
+                                onChange={(e) =>
+                                  patch({
+                                    skill_ids: e.target.checked
+                                      ? [
+                                          ...(editor.skill_ids || []).filter(
+                                            (id) => id !== s.manifest.id,
+                                          ),
+                                          s.manifest.id,
+                                        ]
+                                      : (editor.skill_ids || []).filter(
+                                          (id) => id !== s.manifest.id,
+                                        ),
+                                  })
+                                }
+                              />
+                              {s.manifest.name}
+                            </label>
+                          );
+                        })}
+                    </div>
+                  )}
                   {props.openFolder && (
                     <button
                       type="button"

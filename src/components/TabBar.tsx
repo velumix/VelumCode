@@ -24,6 +24,7 @@ interface TabBarProps {
   onCommands: () => void;
   onSettings: () => void;
   onPlugins: () => void;
+  onSkills: () => void;
   onKanban: () => void;
   onBots: () => void;
   workspace?: string;
@@ -60,7 +61,7 @@ function pillDetail(t: TabInfo): string {
   return `${who} · ${sessionDetail(s)}`;
 }
 
-export default function TabBar({ tabs, activeId, onSelect, onClose, onNew, onCommands, onSettings, onPlugins, onKanban, onBots, workspace }: TabBarProps) {
+export default function TabBar({ tabs, activeId, onSelect, onClose, onNew, onCommands, onSettings, onPlugins, onSkills, onKanban, onBots, workspace }: TabBarProps) {
   const project = workspace?.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "Your workspace";
   return (
     <aside className="sidebar" aria-label="Conversations">
@@ -127,6 +128,7 @@ export default function TabBar({ tabs, activeId, onSelect, onClose, onNew, onCom
         <button type="button" onClick={onBots} aria-label="Bots" title="Bots and schedules"><Icon name="chat" size={18}/><span>Bots</span></button>
         <button type="button" onClick={onKanban} disabled={!workspace} aria-label="Kanban" title="Workspace Kanban"><Icon name="board" size={18}/><span>Kanban</span></button>
         <button type="button" onClick={onPlugins} aria-label="Plugins" title="Plugins"><Icon name="code" size={18}/><span>Plugins</span></button>
+        <button type="button" onClick={onSkills} aria-label="Skills" title="Skills"><Icon name="layers" size={18}/><span>Skills</span></button>
         <button type="button" onClick={onSettings} aria-label="Settings" title="Settings (Ctrl+,)"><Icon name="settings" size={18}/><span>Settings</span><kbd>Ctrl ,</kbd></button>
         <button type="button" onClick={onCommands} aria-label="Command menu" title="Command menu (Ctrl+K)"><Icon name="command" size={18} /><span>Command menu</span><kbd>Ctrl K</kbd></button>
       </div>

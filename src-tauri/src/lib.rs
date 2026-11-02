@@ -31,6 +31,9 @@ mod remote;
 mod remote_auth;
 mod runner;
 mod session_log;
+mod skill_catalog;
+mod skill_github;
+mod skills;
 mod storage;
 mod tailscale;
 mod tool_bridge;
@@ -84,6 +87,8 @@ pub fn run() {
             bots::setup(app.handle());
             plugins::setup(app.handle());
             plugin_catalog::setup(app.handle());
+            skills::setup(app.handle());
+            skill_catalog::setup(app.handle());
             kanban::setup(app.handle());
             history::setup(app.handle());
             automation::setup(app.handle());
@@ -121,6 +126,14 @@ pub fn run() {
             plugins::plugins_remove,
             plugins::plugins_source,
             plugins::plugins_call,
+            skills::skills_list,
+            skill_catalog::skills_catalog,
+            skills::skills_preview,
+            skills::skills_install,
+            skills::skills_enable,
+            skills::skills_remove,
+            skills::skills_content,
+            skills::skills_save_local,
             history::history_forget,
             history::history_desktop_save,
             history::history_draft_save,
@@ -130,6 +143,7 @@ pub fn run() {
             provider_models::provider_models,
             provider_models::provider_warmup,
             runner::agent_configure,
+            runner::agent_configure_skills,
             runner::agent_set_permissions,
             runner::agent_check_access,
             provider_auth::antigravity_login_start,

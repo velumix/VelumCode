@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "skills": [
+    {
+      "repository": "velumix/velum-skill-review-checklist",
+      "commit": "fc7ef2df8754225deecf6399fdf8d064db0ae942",
+      "manifest": {
+        "apiVersion": 1,
+        "id": "velum.review-checklist",
+        "name": "Review checklist",
+        "version": "1.0.0",
+        "description": "Review a change for correctness, regressions, security and missing tests, with findings ordered by severity.",
+        "author": "Velumix",
+        "entry": "SKILL.md",
+        "tags": [
+          "review",
+          "quality"
+        ]
+      }
+    }
+  ]
+}

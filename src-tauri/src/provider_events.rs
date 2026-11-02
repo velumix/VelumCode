@@ -234,7 +234,11 @@ impl Stream {
                             _ => "MCP tool",
                         }
                         .into(),
-                        detail: if detail.is_empty() { None } else { Some(detail.clone()) },
+                        detail: if detail.is_empty() {
+                            None
+                        } else {
+                            Some(detail.clone())
+                        },
                     });
                     if !detail.is_empty() {
                         events.push(Event::ToolDelta {
@@ -388,7 +392,8 @@ impl Stream {
                 };
                 let id = format!("agy-{index}");
                 if self.tools.insert(id.clone()) {
-                    let detail = extract_antigravity_detail(&step["tool_name"], step, &step["tool_info"]);
+                    let detail =
+                        extract_antigravity_detail(&step["tool_name"], step, &step["tool_info"]);
                     events.push(Event::ToolStart {
                         task_id: id.clone(),
                         name: text(step, "tool_name"),

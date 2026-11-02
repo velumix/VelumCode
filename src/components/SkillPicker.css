@@ -1,0 +1,121 @@
+.skill-picker {
+  display: inline-flex;
+}
+.skill-picker-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: min(420px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--accent-border);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px #0006;
+  overflow: hidden;
+  z-index: 31;
+  animation: content-arrive 160ms var(--ease-out);
+  text-align: left;
+}
+.skill-picker-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px 8px;
+}
+.skill-picker-head strong {
+  font-size: calc(13px * var(--ui-scale));
+}
+.skill-picker-head span {
+  font-size: calc(11px * var(--ui-scale));
+  color: var(--muted);
+}
+.skill-picker-list {
+  max-height: 280px;
+  overflow: auto;
+  padding: 4px 8px 8px;
+  display: grid;
+  gap: 2px;
+}
+.skill-picker-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.skill-picker-item:hover {
+  background: var(--accent-dim);
+}
+.skill-picker-item.capped {
+  opacity: 0.55;
+  cursor: default;
+}
+.skill-picker-item input {
+  margin-top: 3px;
+  accent-color: var(--blue);
+}
+.skill-picker-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.skill-picker-copy strong {
+  font-size: calc(12px * var(--ui-scale));
+  font-weight: 600;
+}
+.skill-picker-copy span {
+  font-size: calc(11px * var(--ui-scale));
+  color: var(--muted);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.skill-picker-empty {
+  margin: 6px;
+  color: var(--muted);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.6;
+}
+.skill-picker-note {
+  margin: 0;
+  padding: 8px 14px;
+  border-top: 1px solid var(--accent-border);
+  color: var(--muted);
+  font-size: calc(11px * var(--ui-scale));
+  line-height: 1.6;
+}
+.skill-picker-note button {
+  font: inherit;
+  color: var(--accent);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+}
+.skill-picker-note button:hover {
+  text-decoration: underline;
+}
+.skill-picker-foot {
+  border-top: 1px solid var(--accent-border);
+  padding: 8px 14px 12px;
+}
+.skill-picker-foot button {
+  font: inherit;
+  font-size: calc(12px * var(--ui-scale));
+  color: var(--accent);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 4px 0;
+}
+.skill-picker-foot button:hover {
+  text-decoration: underline;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skill-picker-menu {
+    animation: none;
+  }
+}
