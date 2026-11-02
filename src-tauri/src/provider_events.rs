@@ -315,7 +315,7 @@ impl Stream {
             "result" => {
                 let result = &value["result"];
                 self.remember(&result["conversation_id"]);
-                let status = match result["status"].as_str() {
+                let mut status = match result["status"].as_str() {
                     Some("SUCCESS")
                         if result["denied_actions"]
                             .as_array()
@@ -327,6 +327,24 @@ impl Stream {
                     Some("CANCELED" | "INTERRUPTED") => "cancelled",
                     _ => "failed",
                 };
+                let resp_text = text(result, "response");
+                let mut reason = if status == "blocked" {
+                    Some("Antigravity denied a tool under the current permissions. Review the command with /permissions in Terminal, or add a scoped rule such as \"command(...)\" under permissions.allow in ~/.gemini/antigravity-cli/settings.json; allow only what is needed, then retry.".into())
+                } else {
+                    error(&result["error"])
+                };
+                if status == "failed"
+                    && reason
+                        .as_deref()
+                        .is_some_and(|e| e.contains("Function call is empty"))
+                {
+                    if !resp_text.is_empty() {
+                        status = "completed";
+                        reason = None;
+                    } else {
+                        reason = Some("Antigravity completed its turn without visible text. Please send a follow-up message to continue.".into());
+                    }
+                }
                 let mut events = if status == "blocked"
                     && result["denied_actions"]
                         .as_array()
@@ -349,15 +367,7 @@ impl Stream {
                         turn: Some(turn),
                     });
                 }
-                events.push(end(
-                    status,
-                    Some(text(result, "response")),
-                    if status == "blocked" {
-                        Some("Antigravity denied a tool under the current permissions. Review the command with /permissions in Terminal, or add a scoped rule such as \"command(...)\" under permissions.allow in ~/.gemini/antigravity-cli/settings.json; allow only what is needed, then retry.".into())
-                    } else {
-                        error(&result["error"])
-                    },
-                ));
+                events.push(end(status, Some(resp_text), reason));
                 events
             }
             "step_update" => {
@@ -573,5 +583,15 @@ mod tests {
             matches!(&stream.fold_line(r#"{"event":"result","result":{"status":"ERROR","error":"Authentication required"}}"#)[0], Event::TurnEnd { status, .. } if status == "failed")
         );
         assert!(stream.fold_line("not json").is_empty());
+    }
+    #[test]
+    fn antigravity_empty_function_call_glitch_recovers_when_response_is_present() {
+        let mut stream = Stream::new(Provider::Antigravity);
+        let events = stream.fold_line(r#"{"event":"result","result":{"status":"ERROR","response":"Task completed.","error":"Malformed function call: Failed to parse function call: Function call is empty - no input to parse."}}"#);
+        assert!(matches!(&events[0], Event::TurnEnd { status, text: Some(t), reason: None } if status == "completed" && t == "Task completed."));
+
+        let mut empty_stream = Stream::new(Provider::Antigravity);
+        let events = empty_stream.fold_line(r#"{"event":"result","result":{"status":"ERROR","response":"","error":"Malformed function call: Failed to parse function call: Function call is empty - no input to parse."}}"#);
+        assert!(matches!(&events[0], Event::TurnEnd { status, reason: Some(r), .. } if status == "failed" && r.contains("without visible text")));
     }
 }

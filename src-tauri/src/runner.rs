@@ -2282,9 +2282,14 @@ fn send_inner(
         }
     };
     let options = session.options.lock().unwrap().clone();
+    let antigravity_guard = if session.provider == Provider::Antigravity && !check_access {
+        "Provider response requirement: Always emit visible text in your final response to conclude a turn cleanly. Never end a turn with internal thinking alone or an empty message, as Antigravity's function-calling parser requires non-empty output.\n\n"
+    } else {
+        ""
+    };
     if let Some(prefix) = prepared.strip_suffix(&prompt) {
         let prefix = prefix.strip_suffix("Current request:\n").unwrap_or(prefix);
-        prepared = format!("{prefix}{skills_block}Current request:\n{prompt}");
+        prepared = format!("{prefix}{skills_block}{antigravity_guard}Current request:\n{prompt}");
     }
     let source = if managed {
         "scheduler"
