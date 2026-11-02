@@ -588,10 +588,14 @@ mod tests {
     fn antigravity_empty_function_call_glitch_recovers_when_response_is_present() {
         let mut stream = Stream::new(Provider::Antigravity);
         let events = stream.fold_line(r#"{"event":"result","result":{"status":"ERROR","response":"Task completed.","error":"Malformed function call: Failed to parse function call: Function call is empty - no input to parse."}}"#);
-        assert!(matches!(&events[0], Event::TurnEnd { status, text: Some(t), reason: None } if status == "completed" && t == "Task completed."));
+        assert!(
+            matches!(&events[0], Event::TurnEnd { status, text: Some(t), reason: None } if status == "completed" && t == "Task completed.")
+        );
 
         let mut empty_stream = Stream::new(Provider::Antigravity);
         let events = empty_stream.fold_line(r#"{"event":"result","result":{"status":"ERROR","response":"","error":"Malformed function call: Failed to parse function call: Function call is empty - no input to parse."}}"#);
-        assert!(matches!(&events[0], Event::TurnEnd { status, reason: Some(r), .. } if status == "failed" && r.contains("without visible text")));
+        assert!(
+            matches!(&events[0], Event::TurnEnd { status, reason: Some(r), .. } if status == "failed" && r.contains("without visible text"))
+        );
     }
 }
