@@ -60,3 +60,31 @@
   font: calc(12px * var(--ui-scale))/1.7 var(--font-mono, monospace);
   margin: 0 !important;
 }
+
+.skill-category-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+.skill-category-chip {
+  font-size: calc(11px * var(--ui-scale, 1));
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-dim);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1.4;
+}
+.skill-category-chip:hover {
+  color: var(--text);
+  border-color: var(--text);
+}
+.skill-category-chip.active {
+  background: var(--accent-dim);
+  color: var(--text);
+  border-color: var(--accent, #6366f1);
+  font-weight: 600;
+}

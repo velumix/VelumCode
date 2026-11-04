@@ -134,6 +134,7 @@ pub fn run() {
             skills::skills_remove,
             skills::skills_content,
             skills::skills_save_local,
+            skills::skills_search_github,
             history::history_forget,
             history::history_desktop_save,
             history::history_draft_save,

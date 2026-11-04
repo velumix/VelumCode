@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { providerNames, type Provider, type RunOptions, type ModelCatalog } from "../providers";
@@ -11,6 +11,12 @@ interface Warmup { installed: boolean; version: string | null; catalog_models: n
 // Cache each provider's advisory CLI check until the user refreshes it.
 const warmupCache = new Map<Provider, Promise<Warmup | null>>();
 const failedWarmup: Warmup = { installed: true, version: null, catalog_models: 0, catalog_notice: "Could not check the CLI.", elapsed_ms: 0 };
+function isAuthFailure(text: string): boolean {
+  if (!text) return false;
+  // Unexpected process termination or generic troubleshooting messages are NOT auth errors.
+  if (/ended without a completion event|produced no output|not found|permission/i.test(text)) return false;
+  return /please sign[ -]?in|sign[ -]?in to (?:use|load)|not authenticated|unauthorized|auth.*(?:required|expired|failed)|token.*expired|invalid_grant/i.test(text);
+}
 function checkWarmup(provider: Provider): Promise<Warmup | null> {
   const cached = warmupCache.get(provider);
   if (cached) return cached;
@@ -30,8 +36,27 @@ export default function ProviderPicker({ value, onChange, failure, options, onOp
   const [error, setError] = useState("");
   const [signIn, setSignIn] = useState(false);
   const [modelsKey, setModelsKey] = useState(0);
+  const initialMount = useRef(true);
+  const lastFailureRef = useRef(failure);
   useEffect(() => {
-    if (value === "antigravity" && failure && /sign[ -]?in|not authenticated|unauthorized|auth.*(?:required|expired|failed)|token.*expired/i.test(failure)) setSignIn(true);
+    if (initialMount.current) {
+      initialMount.current = false;
+      // On app launch or restored tab mount, never pop up a modal dialog.
+      // Verify CLI warmup & models quietly in the background.
+      if (value === "antigravity" && failure && isAuthFailure(failure)) {
+        warmupCache.delete(value);
+        setWarmupKey((k) => k + 1);
+        setModelsKey((k) => k + 1);
+      }
+      return;
+    }
+    // Only open the sign-in modal for new live turn failures during the active session
+    if (failure !== lastFailureRef.current) {
+      lastFailureRef.current = failure;
+      if (value === "antigravity" && failure && isAuthFailure(failure)) {
+        setSignIn(true);
+      }
+    }
   }, [value, failure]);
   const refresh = () => invoke<Info[]>("provider_status").then((result) => { setProviders(Array.isArray(result) ? result : []); setError(""); }).catch((error) => setError(String(error)));
   useEffect(() => { void refresh(); }, []);

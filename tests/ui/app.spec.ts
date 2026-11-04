@@ -230,6 +230,18 @@ test("Antigravity authentication errors open sign-in and retries replace the ses
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
+test("startup does not greet the user with a Google sign-in popup even when previous session had an interrupted turn", async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as any).qaAgentRestore = [
+      { kind: "turn_start", prompt: "Previous question" },
+      { kind: "turn_end", status: "failed", reason: "Antigravity ended without a completion event. Open Terminal to check its sign-in and setup." },
+    ];
+  });
+  await boot(page);
+  await pickProvider(page, "antigravity");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
 test("providers keep separate conversations, drafts and terminal sessions", async ({ page }) => {
   await boot(page);
   await composer(page).fill("My Muse draft");

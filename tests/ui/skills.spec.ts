@@ -49,6 +49,7 @@ async function skillFixture(page: Page) {
       if (cmd === "agent_configure_skills") return [...args.skillIds];
       if (cmd === "skills_catalog") return structuredClone(w.qa.skillCatalog);
       if (cmd === "skills_list") return structuredClone(w.qa.skills);
+      if (cmd === "skills_search_github") return [];
       if (cmd === "skills_preview")
         return { ...skill, bytes: body.length, body };
       if (cmd === "skills_install") {
@@ -167,4 +168,36 @@ test("create a local skill and read it back", async ({ page }) => {
   await expect(page.locator(".plugin-run pre")).toContainText(
     "Use this skill when the user asks for release notes.",
   );
+});
+
+test("skills browser shows GitHub search results and category filtering", async ({ page }) => {
+  await boot(page);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.qa.skills = [];
+    w.qa.skillCatalog = {
+      catalog: { schemaVersion: 1, skills: [] },
+      fetched_at: 1,
+      notice: null,
+    };
+    const orig = w.__TAURI_INTERNALS__.invoke;
+    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
+      if (cmd === "skills_catalog") return structuredClone(w.qa.skillCatalog);
+      if (cmd === "skills_list") return structuredClone(w.qa.skills);
+      if (cmd === "skills_search_github") {
+        return [
+          {
+            repository: "Nutlope/hallmark",
+            description: "Anti-AI-slop design skill for Claude Code, Cursor, and Codex.",
+            stars: 45000,
+            topics: ["design", "skills"],
+          },
+        ];
+      }
+      return orig(cmd, args);
+    };
+  });
+  await page.getByRole("button", { name: "Skills", exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText("Nutlope/hallmark");
+  await expect(page.getByRole("dialog")).toContainText("Anti-AI-slop design skill");
 });

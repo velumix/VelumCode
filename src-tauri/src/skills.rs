@@ -513,9 +513,25 @@ pub fn setup(app: &tauri::AppHandle) {
 
 #[tauri::command]
 pub fn skills_list(state: State<SkillState>) -> Vec<Installed> {
-    let mut list: Vec<_> = state.installed.lock().unwrap().values().cloned().collect();
+    let fresh = SkillState::load(state.root.clone());
+    let mut installed = state.installed.lock().unwrap();
+    if let Ok(fresh_map) = fresh.installed.into_inner() {
+        for (k, v) in fresh_map {
+            installed.entry(k).or_insert(v);
+        }
+    }
+    let mut list: Vec<_> = installed.values().cloned().collect();
     list.sort_by(|a, b| a.manifest.name.cmp(&b.manifest.name));
     list
+}
+
+#[tauri::command]
+pub async fn skills_search_github(
+    query: String,
+) -> Result<Vec<crate::skill_github::GitHubRepoResult>, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::skill_github::search(&query))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

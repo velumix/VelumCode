@@ -7,6 +7,7 @@ import "./PluginDirectory.css";
 import "./SkillsPanel.css";
 import {
   skillSubmissionUrl,
+  type GitHubRepoResult,
   type InstalledSkill,
   type LocalSkillDraft,
   type SkillCatalog,
@@ -27,6 +28,17 @@ function Tags({ tags }: { tags: string[] }) {
   );
 }
 
+const CATEGORIES = [
+  "All",
+  "Review",
+  "Coding",
+  "UI/UX",
+  "Security",
+  "Testing",
+  "Research",
+  "Git",
+];
+
 function SkillDirectory({
   skills,
   busy,
@@ -46,8 +58,28 @@ function SkillDirectory({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [githubResults, setGithubResults] = useState<GitHubRepoResult[] | null>(null);
+  const [searchingGithub, setSearchingGithub] = useState(false);
+  const [githubError, setGithubError] = useState("");
+  const [searchedTerm, setSearchedTerm] = useState("");
   const flight = useRef(false);
   const alive = useRef(true);
+
+  const runGithubSearch = async (queryToSearch?: string) => {
+    const term = (queryToSearch !== undefined ? queryToSearch : search).trim();
+    setSearchingGithub(true);
+    setGithubError("");
+    setSearchedTerm(term);
+    try {
+      const results = await invoke<GitHubRepoResult[]>("skills_search_github", { query: term });
+      if (alive.current) setGithubResults(results);
+    } catch (e) {
+      if (alive.current) setGithubError(String(e));
+    } finally {
+      if (alive.current) setSearchingGithub(false);
+    }
+  };
+
   const load = async (refresh: boolean) => {
     if (flight.current) return;
     flight.current = true;
@@ -63,40 +95,105 @@ function SkillDirectory({
       if (alive.current) setLoading(false);
     }
   };
+
   useEffect(() => {
     alive.current = true;
     void load(false);
+    void runGithubSearch("");
     return () => {
       alive.current = false;
     };
   }, []);
+
+  // Debounced search on user input
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void runGithubSearch(search);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [search]);
+
   const list =
     view?.catalog.skills.filter((s) =>
       `${s.manifest.name} ${s.manifest.description} ${s.manifest.author} ${s.repository} ${s.manifest.tags.join(" ")}`
         .toLowerCase()
         .includes(search.toLowerCase()),
     ) || [];
+
   return (
     <section className="plugin-directory" aria-label="Skill directory">
       <div className="plugin-directory-tools">
-        <label className="plugin-search">
+        <form
+          className="plugin-search"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void runGithubSearch();
+          }}
+        >
           <Icon name="search" size={17} />
           <input
             aria-label="Search skills"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search skills…"
+            onChange={(e) => {
+              setSearch(e.target.value);
+            }}
+            placeholder="Search skills, or type a topic/keyword…"
             type="search"
           />
-        </label>
+          {search.trim().length >= 2 && (
+            <button
+              type="submit"
+              className="plugin-primary"
+              disabled={busy || searchingGithub}
+              title="Search GitHub live"
+              style={{
+                minHeight: "28px",
+                padding: "0 10px",
+                fontSize: "calc(11px * var(--ui-scale, 1))",
+                borderRadius: "6px",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {searchingGithub ? "Searching…" : "Search"}
+            </button>
+          )}
+        </form>
         <button
-          disabled={loading || busy}
-          onClick={() => void load(true)}
+          disabled={loading || busy || searchingGithub}
+          onClick={() => {
+            void load(true);
+            void runGithubSearch(search);
+          }}
           aria-label="Refresh skill directory"
+          title="Refresh directory and GitHub skills"
         >
           <Icon name="reset" size={16} />
         </button>
       </div>
+
+      <div className="skill-category-chips">
+        {CATEGORIES.map((cat) => {
+          const isSelected =
+            cat === "All"
+              ? !search
+              : search.toLowerCase() === cat.toLowerCase();
+          return (
+            <button
+              key={cat}
+              type="button"
+              className={`skill-category-chip${isSelected ? " active" : ""}`}
+              onClick={() => {
+                const val = cat === "All" ? "" : cat;
+                setSearch(val);
+                void runGithubSearch(val);
+              }}
+            >
+              {cat}
+            </button>
+          );
+        })}
+      </div>
+
       {view?.notice && (
         <p className="plugin-catalog-notice" role="status">
           {view.notice}
@@ -107,92 +204,182 @@ function SkillDirectory({
           {error}
         </p>
       )}
-      <div className="plugin-directory-heading">
-        <span>
-          {loading
-            ? "Loading directory…"
-            : `${list.length} ${list.length === 1 ? "skill" : "skills"}`}
-        </span>
-        <span>Reviewed listings · Works with every provider</span>
-      </div>
-      <div className="plugin-directory-grid" aria-busy={loading}>
-        {list.map((s) => {
-          const installed = skills.find((i) => i.manifest.id === s.manifest.id);
-          const same = installed?.origin?.repository === s.repository;
-          const exact = same && installed?.origin?.commit === s.commit;
-          return (
-            <article className="plugin-listing" key={s.manifest.id}>
-              <div className="plugin-listing-heading">
-                <span className="plugin-listing-icon">
-                  <Icon name="sparkles" size={22} />
-                </span>
-                <div>
-                  <h3>{s.manifest.name}</h3>
-                  <span>By {s.manifest.author}</span>
-                </div>
-                <span className="plugin-listing-version">
-                  v{s.manifest.version}
-                </span>
-              </div>
-              <p>{s.manifest.description}</p>
-              <Tags tags={s.manifest.tags} />
-              <span className="plugin-listing-meta">
-                Instructions only · No code runs
-              </span>
-              <div className="plugin-listing-actions">
-                <button
-                  className={exact ? "" : "plugin-primary"}
-                  disabled={busy || loading}
-                  onClick={() =>
-                    exact
-                      ? onManage()
-                      : onReview(s.repository, s.manifest.id, s.commit)
-                  }
-                >
-                  {exact
-                    ? "Installed"
-                    : installed
-                      ? "Review listed version"
-                      : "Review & install"}
-                </button>
-                <button
-                  className="plugin-source-link"
-                  onClick={() =>
-                    void openUrl(
-                      `https://github.com/${s.repository}/tree/${s.commit}`,
-                    ).catch((e) => setError(String(e)))
-                  }
-                >
-                  View on GitHub ↗
-                </button>
-              </div>
-            </article>
-          );
-        })}
-      </div>
-      {!loading && !list.length && (
+      {githubError && (
+        <p className="plugin-error" role="alert">
+          {githubError}
+        </p>
+      )}
+
+      {list.length > 0 && (
+        <>
+          <div className="plugin-directory-heading">
+            <span>
+              {loading
+                ? "Loading directory…"
+                : `Official Directory (${list.length})`}
+            </span>
+            <span>Reviewed listings · Works with every provider</span>
+          </div>
+          <div className="plugin-directory-grid" aria-busy={loading}>
+            {list.map((s) => {
+              const installed = skills.find((i) => i.manifest.id === s.manifest.id);
+              const same = installed?.origin?.repository === s.repository;
+              const exact = same && installed?.origin?.commit === s.commit;
+              return (
+                <article className="plugin-listing" key={s.manifest.id}>
+                  <div className="plugin-listing-heading">
+                    <span className="plugin-listing-icon">
+                      <Icon name="sparkles" size={22} />
+                    </span>
+                    <div>
+                      <h3>{s.manifest.name}</h3>
+                      <span>By {s.manifest.author}</span>
+                    </div>
+                    <span className="plugin-listing-version">
+                      v{s.manifest.version}
+                    </span>
+                  </div>
+                  <p>{s.manifest.description}</p>
+                  <Tags tags={s.manifest.tags} />
+                  <span className="plugin-listing-meta">
+                    Instructions only · No code runs
+                  </span>
+                  <div className="plugin-listing-actions">
+                    <button
+                      className={exact ? "" : "plugin-primary"}
+                      disabled={busy || loading}
+                      onClick={() =>
+                        exact
+                          ? onManage()
+                          : onReview(s.repository, s.manifest.id, s.commit)
+                      }
+                    >
+                      {exact
+                        ? "Installed"
+                        : installed
+                          ? "Review listed version"
+                          : "Review & install"}
+                    </button>
+                    <button
+                      className="plugin-source-link"
+                      onClick={() =>
+                        void openUrl(
+                          `https://github.com/${s.repository}/tree/${s.commit}`,
+                        ).catch((e) => setError(String(e)))
+                      }
+                    >
+                      View on GitHub ↗
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {githubResults && githubResults.length > 0 && (
+        <>
+          <div className="plugin-directory-heading" style={{ marginTop: list.length ? "24px" : "12px" }}>
+            <span>
+              {searchedTerm
+                ? `GitHub Skills for "${searchedTerm}" (${githubResults.length})`
+                : `Featured & Trending GitHub Skills (${githubResults.length})`}
+            </span>
+            <span>{searchingGithub ? "Searching GitHub…" : "Public repositories · Click to inspect instructions"}</span>
+          </div>
+          <div className="plugin-directory-grid" aria-busy={searchingGithub}>
+            {githubResults.map((repo) => {
+              const installed = skills.find((i) => i.origin?.repository?.toLowerCase() === repo.repository.toLowerCase());
+              return (
+                <article className="plugin-listing" key={repo.repository}>
+                  <div className="plugin-listing-heading">
+                    <span className="plugin-listing-icon">
+                      <Icon name="sparkles" size={22} />
+                    </span>
+                    <div>
+                      <h3>{repo.repository}</h3>
+                      <span>{repo.stars > 0 ? `⭐ ${repo.stars.toLocaleString()} · ` : ""}Public repository</span>
+                    </div>
+                  </div>
+                  <p>{repo.description || "No description provided."}</p>
+                  <Tags tags={repo.topics.slice(0, 5)} />
+                  <span className="plugin-listing-meta">
+                    Live from GitHub · Instruction pack
+                  </span>
+                  <div className="plugin-listing-actions">
+                    <button
+                      className="plugin-primary"
+                      disabled={busy}
+                      onClick={() => onReview(repo.repository)}
+                    >
+                      {installed ? "Review installed" : "Review & install"}
+                    </button>
+                    <button
+                      className="plugin-source-link"
+                      onClick={() =>
+                        void openUrl(`https://github.com/${repo.repository}`).catch((e) =>
+                          setError(String(e)),
+                        )
+                      }
+                    >
+                      View on GitHub ↗
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {githubResults && !githubResults.length && !list.length && !searchingGithub && (
+        <div className="plugin-empty">
+          <Icon name="search" size={27} />
+          <strong>No skills found matching &ldquo;{searchedTerm}&rdquo;</strong>
+          <p>Try searching for a different keyword, paste a repository directly in Install from GitHub, or write your own.</p>
+          <button className="plugin-primary" onClick={onNew} disabled={busy}>
+            Write a skill
+          </button>
+        </div>
+      )}
+
+      {!loading && !list.length && !githubResults && !searchingGithub && (
         <div className="plugin-empty">
           <Icon name="search" size={27} />
           <strong>
-            {search ? "No matching skills" : "The directory is getting started"}
+            {search ? "No matching skills" : "Discovering skills from GitHub…"}
           </strong>
           <p>
             {search
-              ? "Try a different name, author or tag."
-              : "Write your first skill, install one from any GitHub repository with a SKILL.md, or publish yours for everyone."}
+              ? "Search across all public GitHub repositories live, or try a different term."
+              : "Connecting to GitHub to load community skills..."}
           </p>
-          {!search && (
-            <button className="plugin-primary" onClick={onNew} disabled={busy}>
-              New skill
+          <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+            <button
+              className="plugin-primary"
+              onClick={() => void runGithubSearch()}
+              disabled={busy || searchingGithub}
+            >
+              {searchingGithub ? "Searching GitHub…" : "Search GitHub"}
             </button>
-          )}
+            <button onClick={onNew} disabled={busy}>
+              Write a skill
+            </button>
+          </div>
         </div>
       )}
+
       <div className="plugin-directory-note">
-        <span>Already have a repository link?</span>
-        <button onClick={onAdd} disabled={busy}>
-          Install from GitHub
-        </button>
+        <span>Already have a repository link or want to create your own?</span>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button onClick={onAdd} disabled={busy}>
+            Install from GitHub
+          </button>
+          <button onClick={onNew} disabled={busy}>
+            Write a skill
+          </button>
+        </div>
       </div>
     </section>
   );
@@ -218,9 +405,14 @@ function PublishSkill() {
     setPreview(null);
     setOpened(false);
     try {
+      const cleanRepo = repository
+        .trim()
+        .replace(/^https?:\/\/github\.com\//i, "")
+        .replace(/\/(?:tree|blob)\/.*$/i, "")
+        .replace(/\.git$/i, "");
       setPreview(
         await invoke<SkillPreview>("skills_preview", {
-          repository: repository.trim(),
+          repository: cleanRepo,
         }),
       );
     } catch (e) {
@@ -505,8 +697,13 @@ export default function SkillsPanel({
       setPreview(null);
       setViewing(null);
       setView("add");
+      const cleanRepo = repo
+        .trim()
+        .replace(/^https?:\/\/github\.com\//i, "")
+        .replace(/\/(?:tree|blob)\/.*$/i, "")
+        .replace(/\.git$/i, "");
       const next = await invoke<SkillPreview>("skills_preview", {
-        repository: repo,
+        repository: cleanRepo,
         ...(commit ? { commit } : {}),
       });
       if (expectedId && next.manifest.id !== expectedId)

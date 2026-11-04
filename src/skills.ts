@@ -44,6 +44,12 @@ export interface SkillCatalog {
   fetched_at: number;
   notice: string | null;
 }
+export interface GitHubRepoResult {
+  repository: string;
+  description: string;
+  stars: number;
+  topics: string[];
+}
 export const MAX_SKILLS_PER_CHAT = 8;
 export const SKILL_CONTEXT_BUDGET = 24000;
 export function skillSubmissionUrl(preview: SkillPreview): string {
