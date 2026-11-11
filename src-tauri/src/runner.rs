@@ -196,7 +196,10 @@ impl AgentState {
             .filter(|s| s.tab_id == tab)
             .max_by_key(|s| s.registration)
             .ok_or("Open the saved chat before continuing in terminal.")?;
-        if !matches!(session.provider, Provider::Muse | Provider::Antigravity) {
+        if !matches!(
+            session.provider,
+            Provider::Muse | Provider::Claude | Provider::Antigravity
+        ) {
             return Err("Terminal continuation is unavailable for this provider.".into());
         }
         if *session.running.lock().unwrap() || session.child.lock().unwrap().is_some() {
@@ -1314,6 +1317,7 @@ fn spawn_reader(
                 match session.provider {
                     Provider::Muse => "Muse retained session records; current session and root run only",
                     Provider::Codex => "Codex completion or retained session delta; launch baseline excludes earlier turns",
+                    Provider::Claude => "Claude Code result usage for this turn",
                     Provider::Antigravity => "Antigravity per-step provider accounting for this turn",
                 }
             }.into();

@@ -120,6 +120,7 @@ pub struct Registration {
     inner: Arc<Inner>,
     token: String,
     pub scope: Arc<Scope>,
+    mcp_file: Mutex<Option<PathBuf>>,
 }
 impl Drop for Registration {
     fn drop(&mut self) {
@@ -127,6 +128,9 @@ impl Drop for Registration {
         self.inner.scopes.lock().unwrap().remove(&self.token);
         // Browser profile and process belong to this turn alone.
         self.scope.browser.lock().unwrap().take();
+        if let Some(path) = self.mcp_file.lock().unwrap().take() {
+            let _ = std::fs::remove_file(path);
+        }
     }
 }
 impl Registration {
@@ -160,6 +164,26 @@ impl Registration {
                     .arg("-c")
                     .arg(format!("mcp_servers.{SERVER_NAME}.{key}={value}"));
             }
+        } else if provider == crate::providers::Provider::Claude {
+            let exe = std::env::current_exe().map_err(|_| "Cannot locate Velum's tool adapter.")?;
+            let path = std::env::temp_dir().join(format!(
+                "velum-claude-mcp-{}.json",
+                uuid::Uuid::new_v4().simple()
+            ));
+            let payload = json!({
+                "mcpServers": {
+                    SERVER_NAME: {
+                        "type": "stdio",
+                        "command": exe,
+                        "args": ["--velum-tool-stdio"],
+                    }
+                }
+            });
+            crate::storage::write_bytes(&path, &serde_json::to_vec(&payload).unwrap())?;
+            if let Some(previous) = self.mcp_file.lock().unwrap().replace(path.clone()) {
+                let _ = std::fs::remove_file(previous);
+            }
+            command.arg("--mcp-config").arg(path);
         } else {
             // These providers expose configuration files rather than a run
             // overlay. Merge just our credential-free stdio registration.
@@ -259,6 +283,7 @@ pub fn begin(
         inner,
         token,
         scope,
+        mcp_file: Mutex::new(None),
     }))
 }
 
@@ -777,9 +802,9 @@ fn update_provider_config(path: &Path, exe: &Path, remove: bool, muse: bool) -> 
 pub fn agent_tools_status(app: AppHandle) -> Value {
     let state = app.state::<Bridge>();
     let inner = &state.0;
-    let providers:Vec<_>=[crate::providers::Provider::Muse,crate::providers::Provider::Codex,crate::providers::Provider::Antigravity].into_iter().map(|provider|{
+    let providers:Vec<_>=[crate::providers::Provider::Muse,crate::providers::Provider::Codex,crate::providers::Provider::Claude,crate::providers::Provider::Antigravity].into_iter().map(|provider|{
         let configured=provider_config(provider).and_then(|p|std::fs::read(p).ok()).and_then(|b|serde_json::from_slice::<Value>(&b).ok()).is_some_and(|v|v["mcpServers"][SERVER_NAME]["args"]==json!(["--velum-tool-stdio"]) || (provider==crate::providers::Provider::Muse && v["mcp_servers"][SERVER_NAME]["args"]==json!(["--velum-tool-stdio"])));
-        json!({"provider":provider,"installed":provider.resolve().is_some(),"registration":if provider==crate::providers::Provider::Codex {"per_turn"} else if configured {"configured"} else {"on_next_turn"}})
+        json!({"provider":provider,"installed":provider.resolve().is_some(),"registration":if matches!(provider, crate::providers::Provider::Codex | crate::providers::Provider::Claude) {"per_turn"} else if configured {"configured"} else {"on_next_turn"}})
     }).collect();
     json!({"permissions":inner.permissions.lock().unwrap().clone(),"ready":inner.url.lock().unwrap().is_some(),"browser_available":crate::tool_control::browser_available(),"native_available":cfg!(windows),"providers":providers,"connection_evidence":"Registration is not a successful connection. Each turn's diagnostics records MCP initialize and tool calls.","scope":"Selected project and current bot. Capabilities run on the Velum host with their own scoped permissions, separately from the CLI shell sandbox."})
 }
@@ -986,6 +1011,7 @@ mod tests {
         for provider in [
             crate::providers::Provider::Muse,
             crate::providers::Provider::Codex,
+            crate::providers::Provider::Claude,
             crate::providers::Provider::Antigravity,
         ] {
             let mut measured = Measurement::new(provider, 1000);

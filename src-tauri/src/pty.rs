@@ -59,7 +59,7 @@ pub(crate) fn build_command(muse_path: &Path) -> CommandBuilder {
     build_command_with_args(muse_path, &[])
 }
 
-fn build_command_with_args(muse_path: &Path, args: &[String]) -> CommandBuilder {
+pub(crate) fn build_command_with_args(muse_path: &Path, args: &[String]) -> CommandBuilder {
     let ext = muse_path
         .extension()
         .and_then(|e| e.to_str())
@@ -291,10 +291,10 @@ pub fn pty_spawn(
     let mut args = options.args(provider);
     if let Some(saved) = &continuation {
         args.extend([
-            if provider == crate::providers::Provider::Muse {
-                "resume".into()
-            } else {
-                "--conversation".into()
+            match provider {
+                crate::providers::Provider::Muse => "resume".into(),
+                crate::providers::Provider::Claude => "--resume".into(),
+                _ => "--conversation".into(),
             },
             saved.session_id.clone(),
         ]);

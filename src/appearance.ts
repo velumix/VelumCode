@@ -243,7 +243,7 @@ export interface AppearanceValues {
   terminalCursor: "bar" | "block" | "underline";
   terminalBlink: boolean;
   terminalScrollback: number;
-  defaultProvider: "last" | "muse" | "codex" | "antigravity";
+  defaultProvider: "last" | "muse" | "codex" | "claude" | "antigravity";
 }
 
 export function resolvedTheme(

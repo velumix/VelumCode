@@ -1,5 +1,5 @@
-export type Provider = "muse" | "codex" | "antigravity";
-export const providerNames: Record<Provider, string> = { muse: "Muse", codex: "Codex", antigravity: "Antigravity" };
+export type Provider = "muse" | "codex" | "claude" | "antigravity";
+export const providerNames: Record<Provider, string> = { muse: "Muse", codex: "Codex", claude: "Claude", antigravity: "Antigravity" };
 export interface RunOptions { model: string; reasoning: string }
 export const defaultOptions: RunOptions = { model: "", reasoning: "" };
 export interface ModelInfo { id: string; label: string; description: string; efforts: string[]; default_effort: string; is_default?: boolean }
@@ -18,6 +18,6 @@ export function saveOptions(provider: Provider, options: RunOptions) {
   try { localStorage.setItem(`velum-options-${provider}`, JSON.stringify(options)); } catch { /* Preferences are optional. */ }
 }
 export function preferredProvider(): Provider {
-  try { const value = localStorage.getItem("velum-provider"); if (value === "codex" || value === "antigravity") return value; } catch { /* Storage is optional. */ }
+  try { const value = localStorage.getItem("velum-provider"); if (value === "codex" || value === "claude" || value === "antigravity") return value; } catch { /* Storage is optional. */ }
   return "muse";
 }

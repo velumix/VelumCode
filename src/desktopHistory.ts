@@ -90,7 +90,7 @@ function parseDesktop(value: { tabs?: SavedTab[]; activeId?: string } | null): D
           typeof t.id !== "string" ||
           !/^[a-zA-Z0-9_-]{1,150}$/.test(t.id) ||
           seen.has(t.id) ||
-          !["muse", "codex", "antigravity"].includes(t.provider) ||
+          !["muse", "codex", "claude", "antigravity"].includes(t.provider) ||
           typeof t.title !== "string" ||
           t.title.length > 200 ||
           (t.workspace !== undefined &&

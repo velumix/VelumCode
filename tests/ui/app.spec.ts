@@ -242,6 +242,38 @@ test("startup does not greet the user with a Google sign-in popup even when prev
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
+test("Claude auth login supports subscription and console modes and keeps codes private", async ({ page }) => {
+  await boot(page);
+  await pickProvider(page, "claude");
+  await expect(page.getByText("Claude sign-in required")).toBeVisible();
+  await composer(page).fill("Keep this Claude draft");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Connect Claude" });
+  await expect(dialog.getByLabel("Paste your authentication code")).toBeFocused();
+  await expect(dialog.getByRole("button", { name: "Connect Claude account" })).toBeDisabled();
+  await dialog.getByRole("button", { name: "Anthropic Console API" }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).qa.calls.some((c: any) => c.cmd === "claude_login_start" && c.args.mode === "console"))).toBe(true);
+  await dialog.getByLabel("Paste your authentication code").fill("fixture-claude-code#state123");
+  await dialog.getByRole("button", { name: "Connect Claude account" }).click();
+  await page.getByRole("button", { name: "Back to conversation" }).click();
+  await expect(composer(page)).toHaveValue("Keep this Claude draft");
+  await expect(page.getByText("Claude signed in · dev@example.com")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Claude auth", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).qa.calls.filter((c: any) => c.cmd === "agent_send"))).toHaveLength(0);
+  await expect.poll(() => page.evaluate(() => (window as any).qa.calls.some((c: any) => c.cmd === "claude_login_cancel"))).toBe(true);
+});
+
+test("Claude authentication errors open sign-in automatically", async ({ page }) => {
+  await boot(page);
+  await pickProvider(page, "claude");
+  await composer(page).fill("Start Claude task");
+  await composer(page).press("Enter");
+  await page.evaluate(() => (window as any).qa.agent({ kind: "turn_end", status: "failed", reason: "Not logged in · Please run /login" }));
+  await expect(page.getByRole("dialog", { name: "Connect Claude" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
 test("providers keep separate conversations, drafts and terminal sessions", async ({ page }) => {
   await boot(page);
   await composer(page).fill("My Muse draft");

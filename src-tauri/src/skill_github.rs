@@ -193,7 +193,9 @@ pub fn package(
     } else {
         // 2. Try common subpaths: skills/{repo_name}/SKILL.md, skills/SKILL.md, or first subdir in skills/
         let repo_short_name = origin.repository.split('/').nth(1).unwrap_or("");
-        let repo_clean_name = repo_short_name.strip_suffix("-skill").unwrap_or(repo_short_name);
+        let repo_clean_name = repo_short_name
+            .strip_suffix("-skill")
+            .unwrap_or(repo_short_name);
 
         let candidate_paths = [
             format!("skills/{repo_short_name}/SKILL.md"),
@@ -205,7 +207,10 @@ pub fn package(
         for path in &candidate_paths {
             if let Ok(Some(content)) = download(
                 &client,
-                &format!("{}/contents/{}?ref={}", origin.repository, path, origin.commit),
+                &format!(
+                    "{}/contents/{}?ref={}",
+                    origin.repository, path, origin.commit
+                ),
                 "application/vnd.github.raw+json",
                 crate::skills::MAX_SKILL_FILE,
                 true,
@@ -213,11 +218,15 @@ pub fn package(
                 let dir = path.strip_suffix("/SKILL.md").unwrap_or("skills");
                 let manifest = download(
                     &client,
-                    &format!("{}/contents/{}/velum-skill.json?ref={}", origin.repository, dir, origin.commit),
+                    &format!(
+                        "{}/contents/{}/velum-skill.json?ref={}",
+                        origin.repository, dir, origin.commit
+                    ),
                     "application/vnd.github.raw+json",
                     32 * 1024,
                     true,
-                ).unwrap_or(None);
+                )
+                .unwrap_or(None);
                 found = Some((content, manifest));
                 break;
             }
@@ -226,7 +235,10 @@ pub fn package(
         if found.is_none() {
             if let Ok(Some(skills_dir_json)) = download(
                 &client,
-                &format!("{}/contents/skills?ref={}", origin.repository, origin.commit),
+                &format!(
+                    "{}/contents/skills?ref={}",
+                    origin.repository, origin.commit
+                ),
                 "application/vnd.github+json",
                 128 * 1024,
                 true,
@@ -243,18 +255,25 @@ pub fn package(
                             let path = format!("skills/{}/SKILL.md", entry.name);
                             if let Ok(Some(content)) = download(
                                 &client,
-                                &format!("{}/contents/{}?ref={}", origin.repository, path, origin.commit),
+                                &format!(
+                                    "{}/contents/{}?ref={}",
+                                    origin.repository, path, origin.commit
+                                ),
                                 "application/vnd.github.raw+json",
                                 crate::skills::MAX_SKILL_FILE,
                                 true,
                             ) {
                                 let manifest = download(
                                     &client,
-                                    &format!("{}/contents/skills/{}/velum-skill.json?ref={}", origin.repository, entry.name, origin.commit),
+                                    &format!(
+                                        "{}/contents/skills/{}/velum-skill.json?ref={}",
+                                        origin.repository, entry.name, origin.commit
+                                    ),
                                     "application/vnd.github.raw+json",
                                     32 * 1024,
                                     true,
-                                ).unwrap_or(None);
+                                )
+                                .unwrap_or(None);
                                 found = Some((content, manifest));
                                 break;
                             }
@@ -329,17 +348,23 @@ pub fn search(query: &str) -> Result<Vec<GitHubRepoResult>, String> {
         }
     }
 
-    let gh_query = if raw.is_empty() || raw.eq_ignore_ascii_case("all") || raw.eq_ignore_ascii_case("popular") {
-        "agent skill sort:stars".to_string()
-    } else if raw.contains("skill") || raw.starts_with("topic:") {
-        raw.to_string()
-    } else {
-        format!("{raw} skill")
-    };
+    let gh_query =
+        if raw.is_empty() || raw.eq_ignore_ascii_case("all") || raw.eq_ignore_ascii_case("popular")
+        {
+            "agent skill sort:stars".to_string()
+        } else if raw.contains("skill") || raw.starts_with("topic:") {
+            raw.to_string()
+        } else {
+            format!("{raw} skill")
+        };
 
     let response = client
         .get("https://api.github.com/search/repositories")
-        .query(&[("q", gh_query.as_str()), ("per_page", "24"), ("sort", "stars")])
+        .query(&[
+            ("q", gh_query.as_str()),
+            ("per_page", "24"),
+            ("sort", "stars"),
+        ])
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .send()

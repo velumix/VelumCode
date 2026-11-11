@@ -97,6 +97,32 @@ pub fn muse(details: &Value, now: u64) -> Option<Progress> {
     })
 }
 
+pub fn claude_retry(value: &Value, now: u64) -> Option<Progress> {
+    if value["type"] != "system" || value["subtype"] != "api_retry" {
+        return None;
+    }
+    let count = |key: &str| value[key].as_u64().filter(|n| (1..=1000).contains(n));
+    let delay_ms = value["retry_delay_ms"]
+        .as_f64()
+        .filter(|ms| ms.is_finite() && *ms > 0.0 && *ms <= 86_400_000.0)
+        .map(|ms| ms.round() as u64)
+        .or_else(|| {
+            value["retry_delay_ms"]
+                .as_u64()
+                .filter(|ms| *ms > 0 && *ms <= 86_400_000)
+        });
+    Some(Progress {
+        phase: Phase::Retrying,
+        checked_at_ms: now,
+        attempt: count("attempt"),
+        max_attempts: count("max_retries"),
+        http_status: value["error_status"]
+            .as_u64()
+            .filter(|code| (100..=599).contains(code)),
+        retry_at_ms: delay_ms.and_then(|ms| now.checked_add(ms)),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,5 +172,18 @@ mod tests {
         assert_eq!(connected.phase, Phase::Connected);
         assert_eq!(connected.retry_at_ms, None);
         assert!(muse(&json!({"phase":"arbitrary"}), 3000).is_none());
+    }
+    #[test]
+    fn claude_retry_preserves_safe_retry_metadata() {
+        let status = claude_retry(
+            &json!({"type":"system","subtype":"api_retry","attempt":2,"max_retries":10,"retry_delay_ms":1250.4,"error_status":429}),
+            5000,
+        )
+        .unwrap();
+        assert_eq!(status.phase, Phase::Retrying);
+        assert_eq!(status.attempt, Some(2));
+        assert_eq!(status.max_attempts, Some(10));
+        assert_eq!(status.http_status, Some(429));
+        assert_eq!(status.retry_at_ms, Some(6250));
     }
 }

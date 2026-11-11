@@ -11,7 +11,7 @@ interface Status {
   providers: { provider: Provider; installed: boolean; registration: string }[];
 }
 const choices: { key: keyof Permissions; label: string; hint: string }[] = [
-  { key: 'enabled', label: 'Connect Velum tools', hint: 'Supply project tools to Muse, Codex and Antigravity on their next turn. Muse and Antigravity receive one managed MCP entry in their user configuration; the original file is backed up once. Codex uses a per-turn configuration.' },
+  { key: 'enabled', label: 'Connect Velum tools', hint: 'Supply project tools to Muse, Codex, Claude and Antigravity on their next turn. Muse and Antigravity receive one managed MCP entry in their user configuration; the original file is backed up once. Codex and Claude use per-turn configuration.' },
   { key: 'file_delete', label: 'Delete project files', hint: 'Remove one regular file after checking its content hash. No recursive folders, links or Git metadata.' },
   { key: 'vault_search', label: 'Search saved memory', hint: 'Read active notes in this project and shared memory when the current bot allows sharing, plus its private notes. Pending and archived notes stay excluded.' },
   { key: 'browser', label: 'Browser previews', hint: 'Use an isolated headless Edge or Chrome profile for navigation, page actions and screenshots. Requires Node.js 22 or newer. The browser closes when the turn ends.' },

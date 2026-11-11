@@ -4,6 +4,7 @@ use crate::providers::Provider;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
+    collections::HashMap,
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -284,6 +285,7 @@ pub struct Probe {
     target: PathBuf,
     owned: bool,
     agy_last_probe: Option<(u64, Vec<usize>)>,
+    claude_commands: HashMap<String, String>,
 }
 impl Probe {
     pub fn prepare(workspace: &Path, environment: String, yolo: bool, revision: u64) -> Self {
@@ -301,6 +303,7 @@ impl Probe {
             target,
             owned: false,
             agy_last_probe: None,
+            claude_commands: HashMap::new(),
         };
         for c in &mut probe.report.checks {
             c.path = match c.operation.as_str() {
@@ -517,6 +520,45 @@ impl Probe {
                         }) =>
             {
                 self.permission_denied();
+            }
+            Provider::Claude if value["type"] == "assistant" => {
+                if let Some(blocks) = value["message"]["content"].as_array() {
+                    for block in blocks {
+                        if block["type"] == "tool_use" && block["name"] == "Bash" {
+                            if let (Some(id), Some(cmd)) =
+                                (block["id"].as_str(), block["input"]["command"].as_str())
+                            {
+                                self.claude_commands.insert(id.into(), cmd.into());
+                            }
+                        }
+                    }
+                }
+            }
+            Provider::Claude if value["type"] == "user" => {
+                if let Some(blocks) = value["message"]["content"].as_array() {
+                    for block in blocks {
+                        if block["type"] != "tool_result" {
+                            continue;
+                        }
+                        let Some(id) = block["tool_use_id"].as_str() else {
+                            continue;
+                        };
+                        let command = self.claude_commands.remove(id).unwrap_or_default();
+                        let output = if let Some(s) = block["content"].as_str() {
+                            s.to_owned()
+                        } else if let Some(items) = block["content"].as_array() {
+                            items
+                                .iter()
+                                .filter_map(|item| item["text"].as_str().or_else(|| item.as_str()))
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        } else {
+                            String::new()
+                        };
+                        let exit_code = block["is_error"].as_bool().map(|e| if e { 1 } else { 0 });
+                        self.output(&output, &command, exit_code);
+                    }
+                }
             }
             _ => {} // Assistant text, echoed commands and process exit are not evidence.
         }

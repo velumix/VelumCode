@@ -44,11 +44,26 @@ export async function boot(page: Page, delay = 0, configure = true, waitForStart
         interactions: new Map<string, any>(),
         failSend: false,
         antigravityInstalled: false,
+        claudeInstalled: true,
         auth: {
           phase: "code",
           url: "https://accounts.google.com/o/oauth2/auth?state=fixture&code_challenge=test",
           message:
             "Sign in with Google, then paste the code from your browser.",
+        },
+        claudeAuth: {
+          loggedIn: false,
+          authMethod: null as string | null,
+          apiProvider: null as string | null,
+          email: null as string | null,
+          orgName: null as string | null,
+          subscriptionType: null as string | null,
+        },
+        claudeLogin: {
+          phase: "code",
+          url: "https://claude.com/cai/oauth/authorize?code=true&state=fixture&code_challenge=test",
+          message:
+            "Sign in with Claude, then paste the code shown in your browser.",
         },
         remote: {
           enabled: false,
@@ -487,11 +502,18 @@ export async function boot(page: Page, delay = 0, configure = true, waitForStart
             return;
           }
           if (cmd === "provider_status")
-            return ["muse", "codex", "antigravity"].map((id) => ({
+            return ["muse", "codex", "claude", "antigravity"].map((id) => ({
               id,
-              installed: id !== "antigravity" || api.antigravityInstalled,
+              installed:
+                id === "antigravity"
+                  ? api.antigravityInstalled
+                  : id === "claude"
+                    ? api.claudeInstalled
+                    : true,
               setup_url:
-                "https://antigravity.google/docs/getting-started?tab=cli",
+                id === "claude"
+                  ? "https://code.claude.com/docs/en/overview"
+                  : "https://antigravity.google/docs/getting-started?tab=cli",
             }));
           if (cmd === "provider_warmup")
             return w.qaFailWarmup
@@ -503,6 +525,47 @@ export async function boot(page: Page, delay = 0, configure = true, waitForStart
               phase: "complete",
               url: "",
               message: "Antigravity is connected.",
+            };
+            return;
+          }
+          if (cmd === "claude_auth_status") return { ...api.claudeAuth };
+          if (cmd === "claude_auth_logout") {
+            api.claudeAuth = {
+              loggedIn: false,
+              authMethod: null,
+              apiProvider: null,
+              email: null,
+              orgName: null,
+              subscriptionType: null,
+            };
+            return { ...api.claudeAuth };
+          }
+          if (cmd === "claude_login_start") {
+            api.claudeLogin = {
+              phase: "code",
+              url:
+                args.mode === "console"
+                  ? "https://platform.claude.com/oauth/authorize?code=true&state=fixture&code_challenge=test"
+                  : "https://claude.com/cai/oauth/authorize?code=true&state=fixture&code_challenge=test",
+              message:
+                "Sign in with Claude, then paste the code shown in your browser.",
+            };
+            return;
+          }
+          if (cmd === "claude_login_status") return { ...api.claudeLogin };
+          if (cmd === "claude_login_submit") {
+            api.claudeLogin = {
+              phase: "complete",
+              url: "",
+              message: "Claude is connected.",
+            };
+            api.claudeAuth = {
+              loggedIn: true,
+              authMethod: "claude.ai",
+              apiProvider: "firstParty",
+              email: "dev@example.com",
+              orgName: null,
+              subscriptionType: "max",
             };
             return;
           }

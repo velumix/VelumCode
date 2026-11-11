@@ -13,6 +13,7 @@ pub struct Stream {
     tools: HashSet<String>,
     agy_last_tool: Option<(u64, Option<String>)>,
     agy_usage: HashMap<u64, crate::provider_usage::TurnUsage>,
+    claude_msg_id: Option<String>,
     pub session_id: Option<String>,
     pub run_id: Option<String>,
 }
@@ -67,6 +68,39 @@ fn extract_antigravity_detail(tool_name: &Value, step: &Value, info: &Value) -> 
             .map(|s| bounded(s.trim())),
     }
 }
+fn extract_claude_detail(input: &Value) -> Option<String> {
+    if !input.is_object() {
+        return None;
+    }
+    [
+        "command",
+        "file_path",
+        "path",
+        "pattern",
+        "query",
+        "url",
+        "description",
+        "prompt",
+    ]
+    .iter()
+    .find_map(|key| input.get(*key).and_then(Value::as_str))
+    .map(|s| bounded(s.trim()))
+}
+fn claude_tool_content(content: &Value) -> String {
+    if let Some(s) = content.as_str() {
+        return s.to_owned();
+    }
+    content
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item["text"].as_str().or_else(|| item.as_str()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
 fn end(status: &str, response: Option<String>, reason: Option<String>) -> Event {
     Event::TurnEnd {
         status: status.into(),
@@ -83,6 +117,7 @@ impl Stream {
             tools: HashSet::new(),
             agy_last_tool: None,
             agy_usage: HashMap::new(),
+            claude_msg_id: None,
             session_id: None,
             run_id: None,
         }
@@ -129,6 +164,7 @@ impl Stream {
         };
         match self.provider {
             Provider::Codex => self.codex(value),
+            Provider::Claude => self.claude(value),
             Provider::Antigravity => self.antigravity(value),
             Provider::Muse => unreachable!(),
         }
@@ -299,6 +335,212 @@ impl Stream {
                             .or_else(|| shell_error.map(|(_, detail, _)| detail.into())),
                     });
                 }
+                events
+            }
+            _ => vec![],
+        }
+    }
+    fn claude(&mut self, value: Value) -> Vec<Event> {
+        self.remember(&value["session_id"]);
+        match value["type"].as_str().unwrap_or_default() {
+            "system" => match value["subtype"].as_str().unwrap_or_default() {
+                "init" => vec![Event::Activity {
+                    text: "Thinking…".into(),
+                }],
+                "api_retry" => crate::provider_progress::claude_retry(
+                    &value,
+                    crate::provider_progress::now_ms(),
+                )
+                .map(|progress| vec![Event::ProviderProgress { progress }])
+                .unwrap_or_default(),
+                "status" if value["status"] == "compacting" => vec![Event::Activity {
+                    text: "Compacting context…".into(),
+                }],
+                _ => vec![],
+            },
+            "stream_event" => {
+                let ev = &value["event"];
+                match ev["type"].as_str().unwrap_or_default() {
+                    "message_start" => {
+                        self.claude_msg_id = ev["message"]["id"].as_str().map(str::to_owned);
+                        vec![]
+                    }
+                    "content_block_start" if ev["content_block"]["type"] == "thinking" => {
+                        vec![Event::Activity {
+                            text: "Thinking…".into(),
+                        }]
+                    }
+                    "content_block_delta" if ev["delta"]["type"] == "text_delta" => {
+                        let delta = text(&ev["delta"], "text");
+                        if delta.is_empty() {
+                            return vec![];
+                        }
+                        let key = format!(
+                            "claude-msg:{}",
+                            self.claude_msg_id.as_deref().unwrap_or("current")
+                        );
+                        self.text.entry(key).or_default().push_str(&delta);
+                        vec![Event::AssistantDelta { text: delta }]
+                    }
+                    _ => vec![],
+                }
+            }
+            "assistant" => {
+                let msg = &value["message"];
+                let msg_id = msg["id"].as_str().unwrap_or("current").to_owned();
+                let mut events = vec![];
+                let mut full_text = String::new();
+                if let Some(blocks) = msg["content"].as_array() {
+                    for block in blocks {
+                        match block["type"].as_str().unwrap_or_default() {
+                            "text" => {
+                                full_text.push_str(block["text"].as_str().unwrap_or_default());
+                            }
+                            "tool_use" => {
+                                let name = text(block, "name");
+                                if name == "TodoWrite" {
+                                    if let Some(items) = block["input"]["todos"].as_array() {
+                                        let todos = items
+                                            .iter()
+                                            .filter_map(|item| {
+                                                let text = item["content"]
+                                                    .as_str()
+                                                    .or_else(|| item["text"].as_str())?
+                                                    .to_owned();
+                                                let status = item["status"]
+                                                    .as_str()
+                                                    .unwrap_or("pending")
+                                                    .to_owned();
+                                                Some(crate::events::TodoItem { text, status })
+                                            })
+                                            .collect::<Vec<_>>();
+                                        events.push(Event::Todos { items: todos });
+                                    }
+                                }
+                                let Some(id) = block["id"]
+                                    .as_str()
+                                    .filter(|s| !s.is_empty())
+                                    .map(str::to_owned)
+                                else {
+                                    continue;
+                                };
+                                if self.tools.insert(id.clone()) {
+                                    let detail = extract_claude_detail(&block["input"]);
+                                    events.push(Event::ToolStart {
+                                        task_id: id.clone(),
+                                        name,
+                                        detail: detail.clone(),
+                                    });
+                                    if let Some(d) = detail.filter(|s| !s.is_empty()) {
+                                        events.push(Event::ToolDelta {
+                                            task_id: id,
+                                            text: format!("{d}\n"),
+                                        });
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                if !full_text.is_empty() {
+                    let addition =
+                        self.append(&format!("claude-msg:{msg_id}"), bounded(&full_text));
+                    if !addition.is_empty() {
+                        events.push(Event::AssistantDelta { text: addition });
+                    }
+                }
+                events
+            }
+            "user" => {
+                let mut events = vec![];
+                if let Some(blocks) = value["message"]["content"].as_array() {
+                    for block in blocks {
+                        if block["type"] != "tool_result" {
+                            continue;
+                        }
+                        let Some(id) = block["tool_use_id"]
+                            .as_str()
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_owned)
+                        else {
+                            continue;
+                        };
+                        let output = claude_tool_content(&block["content"]);
+                        let is_error = block["is_error"].as_bool().unwrap_or(false);
+                        let shell_failure =
+                            if is_error || crate::workspace_access::powershell_error(&output) {
+                                crate::workspace_access::failure(&output)
+                            } else {
+                                None
+                            };
+                        let status = if shell_failure
+                            .is_some_and(|(s, _, _)| s == crate::workspace_access::Status::Blocked)
+                        {
+                            "blocked"
+                        } else if is_error || shell_failure.is_some() {
+                            "failed"
+                        } else {
+                            "completed"
+                        };
+                        if !output.is_empty() {
+                            events.push(Event::ToolDelta {
+                                task_id: id.clone(),
+                                text: bounded(&crate::events::tool_text(output.clone())),
+                            });
+                        }
+                        events.push(Event::ToolEnd {
+                            task_id: id,
+                            status: status.into(),
+                            reason: shell_failure.map(|(_, detail, _)| detail.into()).or_else(
+                                || {
+                                    (status != "completed" && !output.is_empty())
+                                        .then(|| bounded(&output))
+                                },
+                            ),
+                        });
+                    }
+                }
+                events
+            }
+            "result" => {
+                let is_error = value["is_error"].as_bool().unwrap_or(false);
+                let subtype = value["subtype"].as_str().unwrap_or_default();
+                let denied = value["permission_denials"]
+                    .as_array()
+                    .is_some_and(|a| !a.is_empty());
+                let status = if denied {
+                    "blocked"
+                } else if is_error || subtype.starts_with("error") {
+                    "failed"
+                } else {
+                    "completed"
+                };
+                let resp_text = text(&value, "result");
+                let error_text = value["errors"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str())
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    })
+                    .filter(|s| !s.is_empty());
+                let reason = if status == "blocked" {
+                    Some("Claude denied a tool under the current permissions. Review permissions in Terminal or enable Full auto if appropriate, then retry.".into())
+                } else if status == "failed" {
+                    error_text.or_else(|| (!resp_text.is_empty()).then(|| resp_text.clone()))
+                } else {
+                    None
+                };
+                let mut events = vec![];
+                if let Some(turn) = crate::provider_usage::claude_turn(&value) {
+                    events.push(Event::Usage {
+                        context: None,
+                        turn: Some(turn),
+                    });
+                }
+                events.push(end(status, Some(resp_text), reason));
                 events
             }
             _ => vec![],
@@ -597,5 +839,41 @@ mod tests {
         assert!(
             matches!(&events[0], Event::TurnEnd { status, reason: Some(r), .. } if status == "failed" && r.contains("without visible text"))
         );
+    }
+    #[test]
+    fn claude_deduplicates_streamed_text_and_folds_tools_and_usage() {
+        let mut stream = Stream::new(Provider::Claude);
+        let sid = "62c2d305-9dd5-4c94-b4c0-667eb612f401";
+        assert!(matches!(
+            &stream.fold_line(&format!(r#"{{"type":"system","subtype":"init","session_id":"{sid}"}}"#))[0],
+            Event::Activity { text } if text == "Thinking…"
+        ));
+        assert_eq!(stream.session_id.as_deref(), Some(sid));
+        assert!(stream.fold_line(r#"{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_1"}}}"#).is_empty());
+        assert_eq!(
+            stream.fold_line(r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"Hi "}}}"#),
+            vec![Event::AssistantDelta { text: "Hi ".into() }]
+        );
+        // Full assistant message repeats already-streamed prefix, plus starts a Bash tool.
+        let assistant = stream.fold_line(r#"{"type":"assistant","message":{"id":"msg_1","content":[{"type":"text","text":"Hi there"},{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"git status"}}]}}"#);
+        assert!(assistant.contains(&Event::AssistantDelta {
+            text: "there".into()
+        }));
+        assert!(assistant.contains(&Event::ToolStart {
+            task_id: "tu_1".into(),
+            name: "Bash".into(),
+            detail: Some("git status".into())
+        }));
+        let user = stream.fold_line(r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu_1","content":"clean","is_error":false}]}}"#);
+        assert!(user.contains(&Event::ToolEnd {
+            task_id: "tu_1".into(),
+            status: "completed".into(),
+            reason: None
+        }));
+        let result = stream.fold_line(r#"{"type":"result","subtype":"success","is_error":false,"duration_ms":450,"result":"Hi there","usage":{"input_tokens":10,"cache_read_input_tokens":4,"output_tokens":2}}"#);
+        assert!(
+            matches!(&result[0], Event::Usage { turn: Some(t), .. } if t.input_tokens == Some(10) && t.elapsed_ms == Some(450))
+        );
+        assert!(matches!(&result[1], Event::TurnEnd { status, .. } if status == "completed"));
     }
 }

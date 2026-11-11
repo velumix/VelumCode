@@ -21,4 +21,7 @@
 .auth-actions button { color: var(--muted); padding: 6px; border: 0; background: transparent; cursor: pointer; font-size: calc(12px * var(--ui-scale)); }
 .auth-footnote { padding-top: 18px; margin: 22px 0 0; border-top: 1px solid var(--border); font-size: calc(11px * var(--ui-scale)); line-height: 1.6; color: var(--muted); }
 .auth-error { font-size: calc(12px * var(--ui-scale)); line-height: 1.6; }
+.auth-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 16px 0 4px; }
+.auth-mode { padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px; background: transparent; color: var(--muted); font-size: calc(12px * var(--ui-scale)); font-weight: 600; cursor: pointer; text-align: center; }
+.auth-mode.active { border-color: var(--accent-border); background: var(--accent-dim); color: var(--text); }
 .auth-dialog :focus-visible { outline: 2px solid var(--accent-border); outline-offset: 3px; }

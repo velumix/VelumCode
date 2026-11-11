@@ -1089,6 +1089,7 @@ export default function SettingsPanel({
                           ["last", "Last used provider"],
                           ["muse", "Muse"],
                           ["codex", "Codex"],
+                          ["claude", "Claude"],
                           ["antigravity", "Antigravity"],
                         ],
                         "Applies to new conversations. Existing conversations keep their provider.",

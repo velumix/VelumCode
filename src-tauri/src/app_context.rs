@@ -243,7 +243,7 @@ pub fn diagnostics(app: &tauri::AppHandle, workspace: &str, id: Option<&str>) ->
         }
         access["permissions"]["requested_mode"] = json!("untested");
     }
-    let providers: Vec<Value> = [crate::providers::Provider::Muse, crate::providers::Provider::Codex, crate::providers::Provider::Antigravity]
+    let providers: Vec<Value> = [crate::providers::Provider::Muse, crate::providers::Provider::Codex, crate::providers::Provider::Claude, crate::providers::Provider::Antigravity]
         .into_iter().map(|p| json!({"provider":p,"installed":p.resolve().is_some(),"authentication":"not checked","tool_connections":"not checked"})).collect();
     let memory = app.state::<crate::memory::Store>().request(
         workspace,

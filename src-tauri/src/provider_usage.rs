@@ -134,6 +134,25 @@ pub fn antigravity_step(value: &Value) -> Option<TurnUsage> {
     (usage.input_tokens.is_some() || usage.output_tokens.is_some()).then_some(usage)
 }
 
+pub fn claude_turn(value: &Value) -> Option<TurnUsage> {
+    let source = if value["usage"].is_object() {
+        &value["usage"]
+    } else {
+        value
+    };
+    let usage = TurnUsage {
+        input_tokens: counter(&source["input_tokens"]),
+        cached_input_tokens: counter(&source["cache_read_input_tokens"]),
+        output_tokens: counter(&source["output_tokens"]),
+        reasoning_output_tokens: None,
+        elapsed_ms: counter(&value["duration_ms"]).filter(|ms| *ms > 0),
+    };
+    (usage.input_tokens.is_some()
+        || usage.cached_input_tokens.is_some()
+        || usage.output_tokens.is_some())
+    .then_some(usage)
+}
+
 pub fn muse_session_file(session: &str) -> Option<PathBuf> {
     uuid::Uuid::parse_str(session).ok()?;
     let data = std::env::var_os("XDG_DATA_HOME")

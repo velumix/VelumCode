@@ -78,7 +78,7 @@ const choices: Partial<Record<keyof Preferences, readonly string[]>> = {
   sendShortcut: ["enter", "ctrl-enter"],
   toolOutput: ["preview", "collapsed", "expanded"],
   terminalCursor: ["bar", "block", "underline"],
-  defaultProvider: ["last", "muse", "codex", "antigravity"],
+  defaultProvider: ["last", "muse", "codex", "claude", "antigravity"],
 };
 export function normalizePreferences(value: unknown): Preferences {
   const result = { ...defaults };

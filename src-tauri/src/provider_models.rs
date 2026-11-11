@@ -36,7 +36,10 @@ impl RunOptions {
         if !self.reasoning.is_empty()
             && (!EFFORTS.contains(&self.reasoning.as_str())
                 || (provider == Provider::Antigravity
-                    && !["low", "medium", "high", "max"].contains(&self.reasoning.as_str())))
+                    && !["low", "medium", "high", "max"].contains(&self.reasoning.as_str()))
+                || (provider == Provider::Claude
+                    && !["low", "medium", "high", "xhigh", "max"]
+                        .contains(&self.reasoning.as_str())))
         {
             return Err("This provider does not support that reasoning level.".into());
         }
@@ -64,7 +67,9 @@ impl RunOptions {
                     // TOML literal quotes survive Windows PowerShell and .cmd shims.
                     format!("model_reasoning_effort='{}'", self.reasoning),
                 ],
-                Provider::Antigravity => ["--effort".into(), self.reasoning.clone()],
+                Provider::Antigravity | Provider::Claude => {
+                    ["--effort".into(), self.reasoning.clone()]
+                }
             });
         }
         args
@@ -361,7 +366,127 @@ fn resolve_defaults(models: &[Model], configured: RunOptions) -> RunOptions {
         reasoning,
     }
 }
+fn parse_claude_models(value: &Value) -> Vec<Model> {
+    value["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(500)
+        .filter_map(|entry| {
+            let id = field(entry, "value");
+            if id.is_empty()
+                || (RunOptions {
+                    model: id.clone(),
+                    reasoning: String::new(),
+                })
+                .validate(Provider::Claude)
+                .is_err()
+            {
+                return None;
+            }
+            let efforts: Vec<String> = entry["supportedEffortLevels"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter(|v| ["low", "medium", "high", "xhigh", "max"].contains(v))
+                .map(str::to_owned)
+                .collect();
+            let default_effort = if efforts.iter().any(|e| e == "medium") {
+                "medium".into()
+            } else {
+                efforts.first().cloned().unwrap_or_default()
+            };
+            let label = field(entry, "displayName");
+            Some(Model {
+                label: if label.is_empty() { id.clone() } else { label },
+                is_default: id == "default",
+                id,
+                description: field(entry, "description"),
+                efforts,
+                default_effort,
+            })
+        })
+        .collect()
+}
+fn discover_claude() -> Result<Catalog, String> {
+    let path = Provider::Claude
+        .resolve()
+        .ok_or_else(|| Provider::Claude.missing())?;
+    if !crate::provider_auth::claude_is_authenticated(&path) {
+        return Err("Sign in to Claude to load available models, then refresh.".into());
+    }
+    let mut cmd = command_path(&path);
+    cmd.args([
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--no-session-persistence",
+    ]);
+    let mut process = Process(
+        crate::child_process::Child::spawn(&mut cmd)
+            .map_err(|_| "Could not load Claude models.")?,
+    );
+    let mut input = process
+        .0
+        .stdin
+        .take()
+        .ok_or("Claude model discovery input unavailable.")?;
+    let out = process
+        .0
+        .stdout
+        .take()
+        .ok_or("Claude model discovery output unavailable.")?;
+    writeln!(
+        input,
+        "{}",
+        json!({"type":"control_request","request_id":"velum-models","request":{"subtype":"initialize"}})
+    )
+    .and_then(|_| input.flush())
+    .map_err(|_| "Could not request Claude models.")?;
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(out.take(2 * 1024 * 1024))
+            .lines()
+            .take(500)
+            .map_while(Result::ok)
+        {
+            if line.len() > 1024 * 1024 {
+                break;
+            }
+            if let Ok(value) = serde_json::from_str::<Value>(&line) {
+                if value["type"] == "control_response"
+                    && value["response"]["request_id"] == "velum-models"
+                {
+                    let _ = tx.send(value);
+                    break;
+                }
+            }
+        }
+    });
+    let reply = rx
+        .recv_timeout(Duration::from_secs(15))
+        .map_err(|_| "Claude took too long to list models. Check your sign-in and refresh.")?;
+    drop(input);
+    if reply["response"]["subtype"] != "success" {
+        return Err("Sign in to Claude to load available models, then refresh.".into());
+    }
+    let models = parse_claude_models(&reply["response"]["response"]);
+    Ok(Catalog {
+        defaults: resolve_defaults(&models, RunOptions::default()),
+        notice: models
+            .is_empty()
+            .then(|| "The CLI returned no selectable models. Refresh or enter a model ID.".into()),
+        models,
+    })
+}
 fn discover(provider: Provider) -> Result<Catalog, String> {
+    if provider == Provider::Claude {
+        return discover_claude();
+    }
     if provider == Provider::Antigravity {
         let mut cmd = command(provider)?;
         cmd.arg("models").stdin(Stdio::null());
@@ -450,6 +575,9 @@ fn discover(provider: Provider) -> Result<Catalog, String> {
             .then(|| "The CLI returned no model catalog. Refresh or enter a model ID.".into()),
         models,
     })
+}
+pub fn invalidate(provider: Provider) {
+    CATALOGS.lock().unwrap().remove(&provider);
 }
 pub fn catalog(provider: Provider, refresh: bool) -> Catalog {
     if !refresh {
@@ -741,5 +869,37 @@ mod tests {
         .validate(Provider::Antigravity)
         .is_err());
         assert!(RunOptions::default().args(Provider::Codex).is_empty());
+    }
+    #[test]
+    fn claude_models_and_effort_options_parse_cleanly() {
+        let parsed = parse_claude_models(&json!({
+            "models": [
+                {"value": "default", "displayName": "Default (recommended)", "description": "Opus", "supportedEffortLevels": ["low", "medium", "high", "xhigh", "max"]},
+                {"value": "sonnet", "displayName": "Sonnet", "description": "Sonnet", "supportedEffortLevels": ["low", "medium", "high"]},
+                {"value": "--bad", "displayName": "Bad"}
+            ]
+        }));
+        assert_eq!(parsed.len(), 2);
+        assert!(parsed[0].is_default);
+        assert_eq!(parsed[0].default_effort, "medium");
+        assert_eq!(
+            parsed[0].efforts,
+            vec!["low", "medium", "high", "xhigh", "max"]
+        );
+        let opts = RunOptions {
+            model: "sonnet".into(),
+            reasoning: "xhigh".into(),
+        };
+        assert!(opts.validate(Provider::Claude).is_ok());
+        assert_eq!(
+            opts.args(Provider::Claude),
+            vec!["--model", "sonnet", "--effort", "xhigh"]
+        );
+        assert!(RunOptions {
+            model: String::new(),
+            reasoning: "ultra".into()
+        }
+        .validate(Provider::Claude)
+        .is_err());
     }
 }

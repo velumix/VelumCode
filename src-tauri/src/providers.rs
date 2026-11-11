@@ -11,6 +11,7 @@ pub enum Provider {
     #[default]
     Muse,
     Codex,
+    Claude,
     Antigravity,
 }
 
@@ -19,6 +20,7 @@ impl Provider {
         match self {
             Self::Muse => "muse",
             Self::Codex => "codex",
+            Self::Claude => "claude",
             Self::Antigravity => "agy",
         }
     }
@@ -26,6 +28,7 @@ impl Provider {
         match self {
             Self::Muse => "Muse",
             Self::Codex => "Codex",
+            Self::Claude => "Claude",
             Self::Antigravity => "Antigravity",
         }
     }
@@ -38,9 +41,14 @@ impl Provider {
             paths.extend([
                 local.join("Programs/muse"),
                 local.join("Programs/OpenAI/Codex/bin"),
+                local.join("Programs/claude"),
                 local.join("agy/bin"),
             ]);
         }
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            paths.push(PathBuf::from(appdata).join("npm"));
+        }
+        paths.push(crate::pty::home_dir().join(".local/bin"));
         let extensions = if cfg!(windows) {
             vec![".exe", ".cmd", ".bat", ".com", ".ps1", ""]
         } else {
@@ -59,6 +67,9 @@ impl Provider {
     pub fn missing(self) -> String {
         if self == Self::Antigravity {
             return "Antigravity CLI was not found. Install `agy`, refresh providers, then choose Sign in.".into();
+        }
+        if self == Self::Claude {
+            return "Claude Code CLI was not found. Install `claude`, refresh providers, then choose Sign in.".into();
         }
         format!("{} CLI was not found. Install `{}` and sign in using the Terminal view, then try again.", self.label(), self.command())
     }
@@ -84,20 +95,26 @@ pub struct Info {
 }
 #[tauri::command]
 pub fn provider_status() -> Vec<Info> {
-    [Provider::Muse, Provider::Codex, Provider::Antigravity]
-        .into_iter()
-        .map(|id| Info {
-            id,
-            name: id.label(),
-            command: id.command(),
-            installed: id.resolve().is_some(),
-            setup_url: match id {
-                Provider::Muse => "https://github.com/velumix/VelumCode#providers",
-                Provider::Codex => "https://developers.openai.com/codex/cli/",
-                Provider::Antigravity => "https://antigravity.google/docs/getting-started?tab=cli",
-            },
-        })
-        .collect()
+    [
+        Provider::Muse,
+        Provider::Codex,
+        Provider::Claude,
+        Provider::Antigravity,
+    ]
+    .into_iter()
+    .map(|id| Info {
+        id,
+        name: id.label(),
+        command: id.command(),
+        installed: id.resolve().is_some(),
+        setup_url: match id {
+            Provider::Muse => "https://github.com/velumix/VelumCode#providers",
+            Provider::Codex => "https://developers.openai.com/codex/cli/",
+            Provider::Claude => "https://code.claude.com/docs/en/overview",
+            Provider::Antigravity => "https://antigravity.google/docs/getting-started?tab=cli",
+        },
+    })
+    .collect()
 }
 
 pub fn exec_command(
@@ -153,6 +170,25 @@ pub fn exec_command(
                     .map_err(|e| e.to_string())?
             ));
             cmd.stdin(Stdio::piped());
+        }
+        Provider::Claude => {
+            cmd.args([
+                "--print",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--include-partial-messages",
+            ]);
+            cmd.args(options.args(provider));
+            if !session.is_empty() {
+                cmd.arg("--resume").arg(session);
+            }
+            if yolo {
+                cmd.arg("--dangerously-skip-permissions");
+            } else {
+                cmd.args(["--permission-prompts", "none"]);
+            }
+            cmd.stdin(std::fs::File::open(prompt).map_err(|e| e.to_string())?);
         }
         Provider::Antigravity => {
             cmd.args([
@@ -244,6 +280,55 @@ mod tests {
                 assert!(!args.contains(&"exec".into()) && !args.contains(&"resume".into()));
             }
         }
+        std::fs::remove_file(prompt).unwrap();
+    }
+    #[test]
+    fn claude_builds_stream_json_and_resume_flags() {
+        let prompt =
+            std::env::temp_dir().join(format!("velum-claude-argv-{}.txt", uuid::Uuid::new_v4()));
+        std::fs::write(&prompt, "probe").unwrap();
+        let workspace = std::env::temp_dir();
+        let opts = crate::provider_models::RunOptions {
+            model: "sonnet".into(),
+            reasoning: "high".into(),
+        };
+        let std_cmd = exec_command(
+            Provider::Claude,
+            Path::new("claude.exe"),
+            "",
+            &workspace,
+            &prompt,
+            false,
+            &opts,
+        )
+        .unwrap();
+        let std_args: Vec<_> = std_cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(std_args.contains(&"--print".into()));
+        assert!(std_args.contains(&"stream-json".into()));
+        assert!(std_args.contains(&"--permission-prompts".into()));
+        assert!(!std_args.contains(&"--dangerously-skip-permissions".into()));
+        assert!(!std_args.contains(&"--resume".into()));
+
+        let yolo_cmd = exec_command(
+            Provider::Claude,
+            Path::new("claude.exe"),
+            "62c2d305-9dd5-4c94-b4c0-667eb612f401",
+            &workspace,
+            &prompt,
+            true,
+            &opts,
+        )
+        .unwrap();
+        let yolo_args: Vec<_> = yolo_cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(yolo_args.contains(&"--dangerously-skip-permissions".into()));
+        assert!(yolo_args.contains(&"--resume".into()));
+        assert!(yolo_args.contains(&"62c2d305-9dd5-4c94-b4c0-667eb612f401".into()));
         std::fs::remove_file(prompt).unwrap();
     }
 }
