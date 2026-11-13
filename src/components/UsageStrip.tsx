@@ -1,11 +1,13 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { providerNames, type Provider } from "../providers";
-import { compactCount, tokenRate, type UsageSnapshot } from "../usage";
+import { compactCount, limitLabel, tokenRate, type RateLimits, type UsageSnapshot } from "../usage";
 import Icon from "./Icon";
 import "./UsageStrip.css";
 
 interface Props {
   usage: UsageSnapshot;
+  /** Subscription windows from the signed-in account, when reported. */
+  limits?: RateLimits | null;
   memory: { titles: string[]; bytes: number } | null;
   provider: Provider;
   running: boolean;
@@ -22,7 +24,18 @@ function tokens(value: number | null | undefined): string {
   return value == null ? "Not reported" : value.toLocaleString();
 }
 
-export default function UsageStrip({ usage, memory, provider, running, elapsed, active }: Props) {
+function resetTime(seconds: number): string {
+  return new Date(seconds * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+}
+
+function limitStatus(status: string): string | null {
+  if (status === "allowed") return null;
+  if (status === "allowed_warning") return "You're close to this plan's usage limit.";
+  if (status === "rejected") return "Plan limit reached. New requests wait for the reset.";
+  return status.replace(/_/g, " ");
+}
+
+export default function UsageStrip({ usage, limits, memory, provider, running, elapsed, active }: Props) {
   const [open, setOpen] = useState(false);
   const id = useId();
   const root = useRef<HTMLDivElement>(null);
@@ -40,6 +53,11 @@ export default function UsageStrip({ usage, memory, provider, running, elapsed, 
   const rate = tokenRate(turn, elapsedMs);
   const speed = rate == null ? "—" : rate.toLocaleString(undefined, { maximumFractionDigits: 1 });
   const memoryTokens = memory && memory.bytes > 0 ? Math.ceil(memory.bytes / 4) : null;
+  // The fullest window is the one that will stop work first.
+  const planUsed = (limits?.windows ?? []).reduce<number | null>(
+    (most, window) => window.utilization == null ? most : Math.max(most ?? 0, window.utilization), null);
+  const planPercent = planUsed == null ? null : Math.round(Math.min(1, planUsed) * 100);
+  const planTone = planPercent == null ? "" : planPercent >= 90 ? " critical" : planPercent >= 75 ? " warning" : "";
   const close = () => { setOpen(false); trigger.current?.focus(); };
 
   useEffect(() => { if (!active) setOpen(false); }, [active]);
@@ -62,7 +80,7 @@ export default function UsageStrip({ usage, memory, provider, running, elapsed, 
     if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false);
   }}>
     <button ref={trigger} type="button" className="usage-summary" aria-expanded={open} aria-controls={open ? id : undefined} aria-haspopup="dialog"
-      aria-label={`Context and usage: ${percent == null ? (estimated ? `estimated ${contextLabel} context used, provider reports no capacity` : "context capacity unavailable") : `${contextLabel} context used`}, ${rate == null ? "token speed unavailable" : `${speed} tokens per second average`}`}
+      aria-label={`Context and usage: ${percent == null ? (estimated ? `estimated ${contextLabel} context used, provider reports no capacity` : "context capacity unavailable") : `${contextLabel} context used`}, ${rate == null ? "token speed unavailable" : `${speed} tokens per second average`}${planPercent == null ? "" : `, ${planPercent}% of your plan's usage window used`}`}
       title="Context, token speed, and memory details" onClick={() => setOpen(value => !value)}>
       <span className={`usage-context${percent == null ? " unknown" : percent >= 95 ? " critical" : percent >= 80 ? " warning" : ""}`}>
         <svg className="context-ring" width="18" height="18" viewBox="0 0 20 20" aria-hidden="true">
@@ -74,6 +92,7 @@ export default function UsageStrip({ usage, memory, provider, running, elapsed, 
       <span className="usage-divider" aria-hidden="true">·</span>
       <span className="usage-speed"><strong>{speed}</strong> tok/s{rate !== null && <span className="usage-qualifier"> avg</span>}</span>
       {elapsedMs != null && <><span className="usage-divider" aria-hidden="true">·</span><span className="usage-time">{duration(elapsedMs)}{running ? " elapsed" : ""}</span></>}
+      {planPercent != null && <><span className="usage-divider" aria-hidden="true">·</span><span className={`usage-plan${planTone}`}>Plan <strong>{planPercent}%</strong></span></>}
       <span className="usage-memory">{memoryTokens !== null && <><Icon name="memory" size={13} /><span>Memory ~{compactCount(memoryTokens)} tok</span></>}</span>
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" className={open ? "usage-chevron open" : "usage-chevron"} aria-hidden="true"><path d="m3 4.5 3 3 3-3" /></svg>
     </button>
@@ -96,6 +115,20 @@ export default function UsageStrip({ usage, memory, provider, running, elapsed, 
         </dl>
         <p>{rate == null ? "Speed appears when the provider reports output-token counts. " : ""}Average speed includes thinking and tool time. Counts follow the provider’s accounting; cached and reasoning tokens are shown separately without adding them again.</p>
       </section>
+      {limits && limits.windows.length > 0 && <section>
+        <div className="usage-section-title">Plan usage<span>{providerNames[provider]} account</span></div>
+        {limits.windows.map((window) => {
+          const used = window.utilization == null ? null : Math.min(100, Math.max(0, window.utilization * 100));
+          const tone = used == null ? " unknown" : used >= 90 ? " critical" : used >= 75 ? " warning" : "";
+          return <div key={window.name} className="usage-plan-window">
+            <div><span>{limitLabel(window.name)} window</span><strong>{used == null ? "Not reported" : `${Math.round(used)}% used`}</strong></div>
+            <div className={`usage-meter${tone}`} aria-hidden="true"><span style={{ width: `${used ?? 0}%` }} /></div>
+            {window.resets_at != null && <p>Resets {resetTime(window.resets_at)}</p>}
+          </div>;
+        })}
+        {limitStatus(limits.status) && <p>{limitStatus(limits.status)}</p>}
+        <p>Reported by your signed-in account with each response. Velum doesn't track this separately.</p>
+      </section>}
       {memory && memory.bytes > 0 && <section>
         <div className="usage-section-title">Memory added<span>~{tokens(memoryTokens)} tokens</span></div>
         <p>{memory.bytes.toLocaleString()} bytes · {memory.titles.length ? `${memory.titles.length} note${memory.titles.length === 1 ? "" : "s"} recalled` : "Learning instructions"}. Memory tokens are an estimate, separate from provider counters.</p>

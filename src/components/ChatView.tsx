@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import Markdown from "./Markdown";
@@ -22,7 +22,8 @@ import type { MemoryView } from '../memory';
 import { emptyQueue, type MessageQueue as Queue } from '../messageQueue';
 import ProviderWait from './ProviderWait';
 import { progressMessage, type ProviderProgress } from '../providerProgress';
-import { mergeUsage, type UsageSnapshot } from '../usage';
+import { mergeUsage, parseRateLimits, type RateLimits, type UsageSnapshot } from '../usage';
+import { DiffLines } from './diffViewer';
 import { ClientMeasurement, type HostMeasurement } from '../turnMeasurement';
 import { attachment, chatSnapshot, type AccessCheck, type Diagnostics } from '../context';
 import SessionDashboard from './SessionDashboard';
@@ -67,7 +68,14 @@ type Block =
       reason?: string;
       startedAt?: number;
       durationMs?: number;
+      /** Structured provider input, when reported (Claude Code). */
+      input?: Record<string, unknown>;
+      /** The subagent call that issued this tool, if any. */
+      parent?: string;
     }
+  /** One thinking block. `open` while it streams; empty text means the
+      provider kept its reasoning private. */
+  | { id: number; kind: "reasoning"; rid: string; text: string; open: boolean; startedAt: number; durationMs?: number }
   | { id: number; kind: "notice"; text: string; tone: "info" | "error"; recovery?: RecoverableRequest }
   | { id: number; kind: "approval"; tool?: string; summary: string; status: string };
 
@@ -118,6 +126,8 @@ interface ChatViewProps {
 }
 
 const PREVIEW_LINES = 6;
+/** Block kinds that fold into one expandable activity group. */
+const GROUPED_KINDS = ["tool", "reasoning"] as const;
 const RENDER_CAP = 4000;
 
 function isPlainAllow(decision: string): boolean {
@@ -153,6 +163,12 @@ function turnTouchedFiles(blocks: Block[], assistantId: number): string[] {
   for (let i = Math.max(0, startIdx); i < idx; i++) {
     const b = blocks[i];
     if (b && b.kind === "tool") {
+      // Structured inputs name the file exactly; text matching is the fallback.
+      const path = b.input?.file_path ?? b.input?.notebook_path;
+      if (typeof path === "string" && path) {
+        files.add(path);
+        continue;
+      }
       const toolText = `${b.name} ${b.output} ${b.result || ""}`;
       const matches = toolText.match(/[a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]{1,8}/g);
       if (matches) {
@@ -412,6 +428,41 @@ function CopyButton({
   );
 }
 
+/** A unified diff for a structured edit (Claude Code's Edit tool). */
+function editDiff(name: string, input: Record<string, unknown>): string | null {
+  if (name !== "Edit") return null;
+  const before = input.old_string, after = input.new_string;
+  if (typeof before !== "string" || typeof after !== "string") return null;
+  const lines = (text: string, mark: string) => (text === "" ? [] : text.split("\n").map((line) => mark + line));
+  const removed = lines(before, "-"), added = lines(after, "+");
+  return [`@@ -1,${removed.length} +1,${added.length} @@`, ...removed, ...added].join("\n");
+}
+
+function ReasoningBlock({ block }: { block: Extract<Block, { kind: "reasoning" }> }) {
+  const [expanded, setExpanded] = useState(false);
+  const text = block.text.trim();
+  const seconds = block.durationMs == null ? null : Math.round(block.durationMs / 1000);
+  const label = block.open ? "Thinking…" : seconds != null && seconds >= 2 ? `Thought for ${seconds}s` : "Thought briefly";
+  const latest = block.open && !expanded ? text.split("\n").filter(Boolean).pop() ?? "" : "";
+  return (
+    <div className={`reasoning-block${block.open ? " live" : ""}`}>
+      <button
+        type="button"
+        className="reasoning-head"
+        onClick={() => { if (text) setExpanded((value) => !value); }}
+        aria-expanded={text ? expanded : undefined}
+        disabled={!text}
+      >
+        <Icon name="sparkles" size={13} />
+        <span className="reasoning-label">{label}</span>
+        {latest && <span className="reasoning-preview">{latest}</span>}
+        {text && <span className="tool-caret" aria-hidden="true">{expanded ? "▾" : "▸"}</span>}
+      </button>
+      {expanded && text && <div className="reasoning-body"><Markdown text={text} /></div>}
+    </div>
+  );
+}
+
 function ToolBlock({ block }: { block: Extract<Block, { kind: "tool" }> }) {
   const { settings } = usePreferences();
   const [override, setOverride] = useState<boolean | null>(null);
@@ -420,6 +471,7 @@ function ToolBlock({ block }: { block: Extract<Block, { kind: "tool" }> }) {
   const body = [block.output, block.result].filter((s) => s && s.length > 0).join("\n");
   const { head, rest } = preview(body || (block.status === "running" ? "…" : ""));
   const detail = block.detail || extractToolSnippet(block.name, block.output, block.result);
+  const diff = useMemo(() => (block.input ? editDiff(block.name, block.input) : null), [block.name, block.input]);
   return (
     <div className={`tool-card ${tone}`}>
       <button type="button" className="tool-head" onClick={() => setOverride(!open)} aria-expanded={open}>
@@ -427,6 +479,7 @@ function ToolBlock({ block }: { block: Extract<Block, { kind: "tool" }> }) {
         <span className="tool-name" title={block.name}>
           {friendlyTool(block.name)}
         </span>
+        {block.parent && <span className="tool-subagent" title="Run by a subagent">subagent</span>}
         {detail && (
           <code className="tool-target-pill" title={detail}>
             {detail}
@@ -444,6 +497,7 @@ function ToolBlock({ block }: { block: Extract<Block, { kind: "tool" }> }) {
       </button>
       {block.policy && !isPlainAllow(block.policy) && <div className="tool-policy">policy: {block.policy}</div>}
       {block.reason && <div className="tool-reason">{block.reason}</div>}
+      {open && diff && <div className="tool-diff"><DiffLines text={diff} /></div>}
       {body && (open || settings.toolOutput !== "collapsed") ? (
         <div className="tool-output-wrap">
           {open ? (
@@ -507,6 +561,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
   const [showLatest, setShowLatest] = useState(false);
   const [memoryUsage,setMemoryUsage]=useState<{titles:string[];bytes:number}|null>(null);
   const [usage, setUsage] = useState<UsageSnapshot>({});
+  const [limits, setLimits] = useState<RateLimits | null>(null);
   const [interactions, setInteractions] = useState<InteractionSnapshot>(emptyInteractions);
   const refreshInteractions = useRef<() => Promise<void>>(async () => {});
   const [draftError, setDraftError] = useState(false);
@@ -833,6 +888,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
     setShowLatest(false);
     setMemoryUsage(null);
     setUsage({});
+    setLimits(null);
     clientMeasurementRef.current.reset();
     titleAssignedRef.current = false;
     setActivity("");
@@ -840,10 +896,51 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
     setReady(false);
     setStatus({ kind: "starting" });
 
+    // A thinking block ends when the answer, a tool, or the turn's end arrives.
+    const closeReasoning = (blocks: Block[]): Block[] =>
+      blocks.some((b) => b.kind === "reasoning" && b.open)
+        ? blocks.map((b) => (b.kind === "reasoning" && b.open ? { ...b, open: false, durationMs: Math.max(0, Date.now() - b.startedAt) } : b))
+        : blocks;
+
     const applyEvent = (envelope: AgentEventEnvelope) => {
       if (disposed || envelope.id !== nativeId) return;
       const e = envelope.event;
       switch (e.kind) {
+        case "reasoning": {
+          const rid = asString(e.id) ?? "reasoning";
+          const text = asString(e.text) ?? "";
+          if (runningRef.current) {
+            setProviderProgress(null);
+            setActivity("Thinking…");
+            setStatus({ kind: "running", detail: "Thinking…" });
+          }
+          setBlocks((prev) => {
+            const index = prev.findIndex((b) => b.kind === "reasoning" && b.rid === rid);
+            if (index < 0) return [...prev, { id: ++idRef.current, kind: "reasoning", rid, text, open: true, startedAt: Date.now() }];
+            const block = prev[index];
+            if (!text || block.kind !== "reasoning") return prev;
+            const next = prev.slice();
+            next[index] = { ...block, text: block.text + text };
+            return next;
+          });
+          break;
+        }
+        case "tool_input": {
+          const taskId = asString(e.task_id);
+          if (!taskId) break;
+          const input = e.input && typeof e.input === "object" && !Array.isArray(e.input) ? (e.input as Record<string, unknown>) : undefined;
+          const detail = asString(e.detail);
+          const parent = asString(e.parent);
+          setBlocks((prev) =>
+            prev.map((b) => (b.kind === "tool" && b.taskId === taskId ? { ...b, input, detail: detail ?? b.detail, parent: parent ?? b.parent } : b)),
+          );
+          break;
+        }
+        case "rate_limit": {
+          const next = parseRateLimits(e);
+          if (next) setLimits(next);
+          break;
+        }
         case 'queue_state': {
           const next = e.queue as unknown as Queue;
           queueRef.current = next; setQueue(next);
@@ -900,7 +997,8 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
             setStatus({ kind: 'running', detail: 'Responding…' });
           }
           assistantSeenRef.current = true;
-          setBlocks((prev) => {
+          setBlocks((current) => {
+            const prev = closeReasoning(current);
             const last = prev[prev.length - 1];
             if (last && last.kind === "assistant" && last.open) {
               return [...prev.slice(0, -1), { ...last, text: last.text + text }];
@@ -918,7 +1016,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
           const needsFinal = !assistantSeenRef.current && !!finalText;
           const recovery = recoverableRequest(status, turnPromptRef.current);
           setBlocks((prev) => {
-            const next: Block[] = prev.map((b) => b.kind === "assistant" ? { ...b, open: false }
+            const next: Block[] = closeReasoning(prev).map((b) => b.kind === "assistant" ? { ...b, open: false }
               : b.kind === "tool" && b.status === "running" ? { ...b, status } : b);
             if (needsFinal) next.push({ id: ++idRef.current, kind: "assistant", text: finalText!, open: false });
             if (status === "failed" || status === "blocked" || status === "cancelled") {
@@ -956,7 +1054,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
           setBlocks((prev) => {
             if (prev.some((b) => b.kind === "tool" && b.taskId === taskId)) return prev;
             return [
-              ...prev,
+              ...closeReasoning(prev),
               { id: ++idRef.current, kind: "tool", taskId, name, detail, status: "running", output: "", startedAt: Date.now() },
             ];
           });
@@ -1533,9 +1631,12 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                 </div>
               </div>
             )}
-            {groupActivity(blocks, settings.groupActivity).map((row) => {
+            {groupActivity(blocks, settings.groupActivity, GROUPED_KINDS).map((row) => {
               if (row.kind === 'activity_group') {
                 const tools = row.items.filter((item): item is Extract<Block,{kind:'tool'}> => item.kind === 'tool');
+                if (!tools.length) {
+                  return <Fragment key={`activity-${row.id}`}>{row.items.map((item) => item.kind === 'reasoning' ? <ReasoningBlock key={item.id} block={item} /> : null)}</Fragment>;
+                }
                 const current = lastMatch(tools,tool=>statusTone(tool.status)==='busy');
                 const currentDetail = current?.detail || (current ? extractToolSnippet(current.name, current.output, current.result) : undefined);
                 const currentSummary = current
@@ -1557,7 +1658,8 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                       try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
                     }}
                   >
-                    {tools.map(tool=><ToolBlock key={tool.id} block={tool}/>)}
+                    {row.items.map((item) => item.kind === 'tool' ? <ToolBlock key={item.id} block={item} />
+                      : item.kind === 'reasoning' ? <ReasoningBlock key={item.id} block={item} /> : null)}
                   </AgentActivity>
                 );
               }
@@ -1730,6 +1832,8 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                 }
             case "tool":
               return <ToolBlock key={b.id} block={b} />;
+            case "reasoning":
+              return <ReasoningBlock key={b.id} block={b} />;
             case "notice":
               return (
                 <div key={b.id} className={`notice ${b.tone}`}>
@@ -1765,7 +1869,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
         )}
       </div>
       <div className="composer-dock">
-      <UsageStrip usage={usage} memory={memoryUsage} provider={provider} running={running} elapsed={elapsed} active={active} />
+      <UsageStrip usage={usage} limits={limits} memory={memoryUsage} provider={provider} running={running} elapsed={elapsed} active={active} />
       <MessageQueue queue={queue} running={running} onAction={async request => {
         const nativeId = nativeIdRef.current;
         if (!nativeId) throw new Error('Conversation is still starting.');

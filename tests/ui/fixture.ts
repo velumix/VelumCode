@@ -60,10 +60,10 @@ export async function boot(page: Page, delay = 0, configure = true, waitForStart
           subscriptionType: null as string | null,
         },
         claudeLogin: {
-          phase: "code",
-          url: "https://claude.com/cai/oauth/authorize?code=true&state=fixture&code_challenge=test",
+          phase: "browser",
+          url: null as string | null,
           message:
-            "Sign in with Claude, then paste the code shown in your browser.",
+            "Claude Code opened your browser. Approve the sign-in there; this window updates when Claude Code finishes.",
         },
         remote: {
           enabled: false,
@@ -541,34 +541,16 @@ export async function boot(page: Page, delay = 0, configure = true, waitForStart
             return { ...api.claudeAuth };
           }
           if (cmd === "claude_login_start") {
+            // Claude Code runs its own browser sign-in; Velum only waits.
             api.claudeLogin = {
-              phase: "code",
-              url:
-                args.mode === "console"
-                  ? "https://platform.claude.com/oauth/authorize?code=true&state=fixture&code_challenge=test"
-                  : "https://claude.com/cai/oauth/authorize?code=true&state=fixture&code_challenge=test",
+              phase: "browser",
+              url: null,
               message:
-                "Sign in with Claude, then paste the code shown in your browser.",
+                "Claude Code opened your browser. Approve the sign-in there; this window updates when Claude Code finishes.",
             };
             return;
           }
           if (cmd === "claude_login_status") return { ...api.claudeLogin };
-          if (cmd === "claude_login_submit") {
-            api.claudeLogin = {
-              phase: "complete",
-              url: "",
-              message: "Claude is connected.",
-            };
-            api.claudeAuth = {
-              loggedIn: true,
-              authMethod: "claude.ai",
-              apiProvider: "firstParty",
-              email: "dev@example.com",
-              orgName: null,
-              subscriptionType: "max",
-            };
-            return;
-          }
           if (cmd === "remote_status" || cmd === "remote_check_tailscale")
             return { ...api.remote };
           if (cmd === "remote_usb_devices")

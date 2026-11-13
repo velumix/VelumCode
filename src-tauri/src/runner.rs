@@ -2394,38 +2394,61 @@ fn send_inner(
         .permission_mode(&id, yolo);
 
     let mut child = child;
-    let control = if matches!(provider, Provider::Muse | Provider::Codex) {
+    // Claude receives composer images as content blocks; anything else keeps
+    // its path reference in the prompt text.
+    let (images, skipped_images) = if provider == Provider::Claude && !check_access {
+        crate::claude_control::attachments(&prompt, workspace)
+    } else {
+        (vec![], vec![])
+    };
+    let control = if matches!(
+        provider,
+        Provider::Muse | Provider::Codex | Provider::Claude
+    ) {
         let input = child
             .stdin
             .take()
             .ok_or("Could not capture the provider's control input.")?;
         let (broker, controls) = crate::interactions::Broker::new(turn_id.clone());
-        let client = if provider == Provider::Muse {
-            let muse = crate::muse_msp::Client::new(
-                input,
-                broker.clone(),
-                controls,
-                session_id.clone(),
-                workspace.display().to_string(),
-                prepared,
-                prompt.clone(),
-                options.clone(),
-                yolo,
-            )?;
-            crate::provider_control::Client::Muse(Box::new(muse))
-        } else {
-            let codex = crate::codex_control::Client::new(
-                input,
-                broker.clone(),
-                controls,
-                session_id.clone(),
-                workspace.display().to_string(),
-                prepared,
-                options.clone(),
-                yolo,
-                usage_baseline.clone(),
-            )?;
-            crate::provider_control::Client::Codex(Box::new(codex))
+        let client = match provider {
+            Provider::Muse => {
+                let muse = crate::muse_msp::Client::new(
+                    input,
+                    broker.clone(),
+                    controls,
+                    session_id.clone(),
+                    workspace.display().to_string(),
+                    prepared,
+                    prompt.clone(),
+                    options.clone(),
+                    yolo,
+                )?;
+                crate::provider_control::Client::Muse(Box::new(muse))
+            }
+            Provider::Codex => {
+                let codex = crate::codex_control::Client::new(
+                    input,
+                    broker.clone(),
+                    controls,
+                    session_id.clone(),
+                    workspace.display().to_string(),
+                    prepared,
+                    options.clone(),
+                    yolo,
+                    usage_baseline.clone(),
+                )?;
+                crate::provider_control::Client::Codex(Box::new(codex))
+            }
+            _ => {
+                let claude = crate::claude_control::Client::new(
+                    input,
+                    broker.clone(),
+                    controls,
+                    &prepared,
+                    &images,
+                )?;
+                crate::provider_control::Client::Claude(Box::new(claude))
+            }
         };
         *session.interactions.lock().unwrap() = Some(broker);
 
@@ -2507,6 +2530,18 @@ fn send_inner(
             budget_bytes: memory_usage.budget_bytes,
         },
     );
+    if !skipped_images.is_empty() {
+        emit(
+            &app,
+            &id,
+            AgentEvent::Notice {
+                text: format!(
+                    "Sent as file references instead of images: {}.",
+                    skipped_images.join("; ")
+                ),
+            },
+        );
+    }
     spawn_reader(
         app,
         id.clone(),

@@ -45,6 +45,43 @@ export function mergeUsage(previous: UsageSnapshot, event: Record<string, unknow
   return next;
 }
 
+/** One subscription usage window from the signed-in provider account. */
+export interface LimitWindow {
+  name: string;
+  /** Fraction used, 0–1. */
+  utilization: number | null;
+  /** Unix seconds when the window resets. */
+  resets_at: number | null;
+}
+
+export interface RateLimits {
+  status: string;
+  windows: LimitWindow[];
+}
+
+export function parseRateLimits(event: Record<string, unknown>): RateLimits | null {
+  const status = typeof event.status === "string" ? event.status : "";
+  if (!status || !Array.isArray(event.windows)) return null;
+  const windows = event.windows.flatMap((value): LimitWindow[] => {
+    const window = record(value);
+    if (!window || typeof window.name !== "string") return [];
+    const used = window.utilization;
+    return [{
+      name: window.name,
+      utilization: typeof used === "number" && Number.isFinite(used) && used >= 0 ? used : null,
+      resets_at: count(window.resets_at),
+    }];
+  }).slice(0, 8);
+  return windows.length ? { status, windows } : null;
+}
+
+export function limitLabel(name: string): string {
+  const labels: Record<string, string> = {
+    five_hour: "5-hour", seven_day: "Weekly", seven_day_opus: "Weekly (Opus)", seven_day_sonnet: "Weekly (Sonnet)",
+  };
+  return Object.prototype.hasOwnProperty.call(labels, name) ? labels[name] : name.replace(/_/g, " ");
+}
+
 export function tokenRate(turn?: TurnUsage | null, elapsedMs = turn?.elapsed_ms): number | null {
   const output = count(turn?.output_tokens);
   const elapsed = count(elapsedMs);

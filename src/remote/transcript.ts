@@ -58,6 +58,7 @@ export function transcript(entries: Entry[]) {
       case "tool_end": { const tool = tools.get(task); if (tool) { tool.status = text(e.status); if (e.reason) tool.text += `\n${text(e.reason)}`; } break; }
       case "todos": if (Array.isArray(e.items)) todos = e.items as typeof todos; break;
       case "activity": activity = text(e.text); break;
+      case "reasoning": activity = "Thinking…"; break;
       case "provider_progress": providerProgress = e.progress as ProviderProgress; break;
       case "notice": blocks.push({ id: seq, kind: "notice", text: text(e.text) }); break;
       case "approval": blocks.push({ id: seq, kind: "approval", name: text(e.tool), text: text(e.summary), status: text(e.status) }); break;

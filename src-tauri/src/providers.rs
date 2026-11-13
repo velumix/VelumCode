@@ -172,8 +172,13 @@ pub fn exec_command(
             cmd.stdin(Stdio::piped());
         }
         Provider::Claude => {
+            // Claude Code's SDK host protocol: the turn arrives as a
+            // stream-json message, and permission prompts and questions are
+            // answered from Velum's chat over the same private connection.
             cmd.args([
                 "--print",
+                "--input-format",
+                "stream-json",
                 "--output-format",
                 "stream-json",
                 "--verbose",
@@ -186,9 +191,14 @@ pub fn exec_command(
             if yolo {
                 cmd.arg("--dangerously-skip-permissions");
             } else {
-                cmd.args(["--permission-prompts", "none"]);
+                cmd.args([
+                    "--permission-mode",
+                    "default",
+                    "--permission-prompt-tool",
+                    "stdio",
+                ]);
             }
-            cmd.stdin(std::fs::File::open(prompt).map_err(|e| e.to_string())?);
+            cmd.stdin(Stdio::piped());
         }
         Provider::Antigravity => {
             cmd.args([
@@ -307,8 +317,15 @@ mod tests {
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
         assert!(std_args.contains(&"--print".into()));
+        assert!(std_args.contains(&"--input-format".into()));
         assert!(std_args.contains(&"stream-json".into()));
-        assert!(std_args.contains(&"--permission-prompts".into()));
+        // Standard mode asks Velum, never auto-denies or bypasses prompts.
+        let tool = std_args
+            .iter()
+            .position(|a| a == "--permission-prompt-tool")
+            .expect("permission prompts go to the host");
+        assert_eq!(std_args[tool + 1], "stdio");
+        assert!(!std_args.contains(&"--permission-prompts".into()));
         assert!(!std_args.contains(&"--dangerously-skip-permissions".into()));
         assert!(!std_args.contains(&"--resume".into()));
 
@@ -327,6 +344,7 @@ mod tests {
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
         assert!(yolo_args.contains(&"--dangerously-skip-permissions".into()));
+        assert!(!yolo_args.contains(&"--permission-prompt-tool".into()));
         assert!(yolo_args.contains(&"--resume".into()));
         assert!(yolo_args.contains(&"62c2d305-9dd5-4c94-b4c0-667eb612f401".into()));
         std::fs::remove_file(prompt).unwrap();

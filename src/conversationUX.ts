@@ -49,10 +49,10 @@ export function latestRecovery<T extends { kind: string; recovery?: RecoverableR
   return undefined;
 }
 
-export function groupActivity<T extends { kind: string; id: number | string }>(blocks: T[], enabled: boolean): ({kind:'block';id:T['id'];block:T} | { kind: 'activity_group'; id: T['id']; items: T[] })[] {
+export function groupActivity<T extends { kind: string; id: number | string }>(blocks: T[], enabled: boolean, kinds: readonly string[] = ['tool']): ({kind:'block';id:T['id'];block:T} | { kind: 'activity_group'; id: T['id']; items: T[] })[] {
   const result: ({kind:'block';id:T['id'];block:T} | { kind: 'activity_group'; id: T['id']; items: T[] })[] = [];
   for (const block of blocks) {
-    if (!enabled || block.kind !== 'tool') { result.push({kind:'block',id:block.id,block}); continue; }
+    if (!enabled || !kinds.includes(block.kind)) { result.push({kind:'block',id:block.id,block}); continue; }
     const previous = result[result.length - 1];
     if (previous?.kind === 'activity_group') previous.items.push(block);
     else result.push({kind:'activity_group',id:block.id,items:[block]});
@@ -92,6 +92,19 @@ export const FRIENDLY_TOOLS: Record<string, string> = {
   cmd: "Command",
   list_dir: "List",
   list_directory: "List",
+  // Claude Code tool names
+  Bash: "Shell",
+  PowerShell: "Shell",
+  Glob: "Find files",
+  Grep: "Search",
+  WebFetch: "Web",
+  WebSearch: "Web",
+  Task: "Subagent",
+  Agent: "Subagent",
+  TodoWrite: "Todos",
+  NotebookEdit: "Notebook",
+  AskUserQuestion: "Question",
+  ExitPlanMode: "Plan",
 };
 
 export function friendlyTool(name: string): string {

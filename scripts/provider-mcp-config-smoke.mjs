@@ -63,7 +63,7 @@ try {
   mkdirSync(path.join(xdg, 'muse'), { recursive: true });
   writeFileSync(path.join(xdg, 'muse/settings.json'), JSON.stringify({ schema_version: 1, mcpServers: { velum_code: { command: app, args: ['--velum-tool-stdio'], mode: 'optional', framing: 'line_delimited_json', env: { VELUM_TOOL_TOKEN: '${VELUM_TOOL_TOKEN:-}', VELUM_TOOL_URL: '${VELUM_TOOL_URL:-}' } } } }));
   const project = path.join(fixture, 'project'); mkdirSync(project);
-  const result = await cli(museBinary, ['exec', '--json', '--provider', 'echo', '--workspace', project, '--max-model-steps', '1', '--no-session-log', '--disable-web-tools', '--no-foreign-personal-context', '--approval-judge', 'off', 'Verify local echo transport.'], {
+  const result = await cli(museBinary, ['exec', '--json', '--provider', 'echo', '--workspace', project, '--trust-workspace', '--max-model-steps', '1', '--no-session-log', '--disable-web-tools', '--no-foreign-personal-context', '--approval-judge', 'off', 'Verify local echo transport.'], {
     USERPROFILE: museHome, XDG_CONFIG_HOME: xdg, XDG_DATA_HOME: path.join(museHome, '.data'),
     VELUM_TOOL_TOKEN: token, VELUM_TOOL_URL: `http://127.0.0.1:${server.address().port}/mcp`,
   });

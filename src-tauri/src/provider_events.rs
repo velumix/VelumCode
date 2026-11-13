@@ -14,6 +14,8 @@ pub struct Stream {
     agy_last_tool: Option<(u64, Option<String>)>,
     agy_usage: HashMap<u64, crate::provider_usage::TurnUsage>,
     claude_msg_id: Option<String>,
+    /// Claude tool calls whose one-line detail has already reached the card.
+    claude_detailed: HashSet<String>,
     pub session_id: Option<String>,
     pub run_id: Option<String>,
 }
@@ -101,6 +103,67 @@ fn claude_tool_content(content: &Value) -> String {
         })
         .unwrap_or_default()
 }
+/// Tool inputs can carry whole files. Cards and the session log need their
+/// shape, not every byte, so long strings and collections are capped.
+pub(crate) fn bounded_input(value: &Value) -> Value {
+    const STRING_CHARS: usize = 16_000;
+    fn walk(value: &Value, budget: &mut usize, depth: usize) -> Value {
+        match value {
+            Value::String(text) => {
+                let keep = (*budget).min(STRING_CHARS);
+                let mut chars = text.chars();
+                let mut kept: String = chars.by_ref().take(keep).collect();
+                *budget = budget.saturating_sub(kept.len());
+                if chars.next().is_some() {
+                    kept.push_str("\n…[truncated]");
+                }
+                Value::String(kept)
+            }
+            Value::Array(items) if depth < 8 => Value::Array(
+                items
+                    .iter()
+                    .take(200)
+                    .map(|item| walk(item, budget, depth + 1))
+                    .collect(),
+            ),
+            Value::Object(fields) if depth < 8 => Value::Object(
+                fields
+                    .iter()
+                    .take(100)
+                    .map(|(key, item)| (key.clone(), walk(item, budget, depth + 1)))
+                    .collect(),
+            ),
+            Value::Array(_) | Value::Object(_) => Value::Null,
+            other => other.clone(),
+        }
+    }
+    walk(value, &mut 64_000, 0)
+}
+/// Claude subscription windows (five-hour, weekly) from `rate_limit_event`.
+fn claude_rate_limit(info: &Value) -> Option<Event> {
+    let status = info["status"].as_str()?.to_owned();
+    let window = |name: &str, value: &Value| crate::events::LimitWindow {
+        name: name.into(),
+        utilization: value["utilization"]
+            .as_f64()
+            .filter(|used| used.is_finite() && *used >= 0.0),
+        resets_at: value["resetsAt"].as_i64().filter(|at| *at > 0),
+    };
+    let mut windows: Vec<_> = info["unifiedWindows"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .take(8)
+        .map(|(name, value)| window(name, value))
+        .collect();
+    if windows.is_empty() {
+        windows.push(window(
+            info["rateLimitType"].as_str().unwrap_or("usage"),
+            info,
+        ));
+    }
+    Some(Event::RateLimit { status, windows })
+}
 fn end(status: &str, response: Option<String>, reason: Option<String>) -> Event {
     Event::TurnEnd {
         status: status.into(),
@@ -118,6 +181,7 @@ impl Stream {
             agy_last_tool: None,
             agy_usage: HashMap::new(),
             claude_msg_id: None,
+            claude_detailed: HashSet::new(),
             session_id: None,
             run_id: None,
         }
@@ -162,11 +226,15 @@ impl Stream {
         let Ok(value) = serde_json::from_str::<Value>(line) else {
             return vec![];
         };
+        self.fold_value(value)
+    }
+    /// Fold one already parsed record from a JSON provider stream.
+    pub fn fold_value(&mut self, value: Value) -> Vec<Event> {
         match self.provider {
             Provider::Codex => self.codex(value),
             Provider::Claude => self.claude(value),
             Provider::Antigravity => self.antigravity(value),
-            Provider::Muse => unreachable!(),
+            Provider::Muse => self.muse.fold_line(&value.to_string()),
         }
     }
     /// Some Agy runs omit the structured tool error and only report a
@@ -342,6 +410,11 @@ impl Stream {
     }
     fn claude(&mut self, value: Value) -> Vec<Event> {
         self.remember(&value["session_id"]);
+        // Subagent records keep their tools nested and never join the answer.
+        let parent = value["parent_tool_use_id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned);
         match value["type"].as_str().unwrap_or_default() {
             "system" => match value["subtype"].as_str().unwrap_or_default() {
                 "init" => vec![Event::Activity {
@@ -356,32 +429,86 @@ impl Stream {
                 "status" if value["status"] == "compacting" => vec![Event::Activity {
                     text: "Compacting context…".into(),
                 }],
+                "session_state_changed" if value["state"] == "requires_action" => {
+                    vec![Event::Activity {
+                        text: "Waiting for your response…".into(),
+                    }]
+                }
                 _ => vec![],
             },
-            "stream_event" => {
+            "rate_limit_event" => claude_rate_limit(&value["rate_limit_info"])
+                .into_iter()
+                .collect(),
+            "stream_event" if parent.is_none() => {
                 let ev = &value["event"];
+                let block_id = || {
+                    format!(
+                        "{}:{}",
+                        self.claude_msg_id.as_deref().unwrap_or("current"),
+                        ev["index"].as_u64().unwrap_or_default()
+                    )
+                };
                 match ev["type"].as_str().unwrap_or_default() {
                     "message_start" => {
                         self.claude_msg_id = ev["message"]["id"].as_str().map(str::to_owned);
                         vec![]
                     }
-                    "content_block_start" if ev["content_block"]["type"] == "thinking" => {
-                        vec![Event::Activity {
-                            text: "Thinking…".into(),
-                        }]
-                    }
-                    "content_block_delta" if ev["delta"]["type"] == "text_delta" => {
-                        let delta = text(&ev["delta"], "text");
-                        if delta.is_empty() {
-                            return vec![];
+                    "content_block_start" => {
+                        match ev["content_block"]["type"].as_str().unwrap_or_default() {
+                            "thinking" | "redacted_thinking" => vec![
+                                Event::Activity {
+                                    text: "Thinking…".into(),
+                                },
+                                Event::Reasoning {
+                                    id: block_id(),
+                                    text: String::new(),
+                                },
+                            ],
+                            // Open the card while a large input (a file write)
+                            // is still streaming; its input arrives with the
+                            // completed assistant record.
+                            "tool_use" => {
+                                let block = &ev["content_block"];
+                                match block["id"].as_str().filter(|id| !id.is_empty()) {
+                                    Some(id) if self.tools.insert(id.to_owned()) => {
+                                        vec![Event::ToolStart {
+                                            task_id: id.to_owned(),
+                                            name: text(block, "name"),
+                                            detail: None,
+                                        }]
+                                    }
+                                    _ => vec![],
+                                }
+                            }
+                            _ => vec![],
                         }
-                        let key = format!(
-                            "claude-msg:{}",
-                            self.claude_msg_id.as_deref().unwrap_or("current")
-                        );
-                        self.text.entry(key).or_default().push_str(&delta);
-                        vec![Event::AssistantDelta { text: delta }]
                     }
+                    "content_block_delta" => match ev["delta"]["type"].as_str().unwrap_or_default()
+                    {
+                        "text_delta" => {
+                            let delta = text(&ev["delta"], "text");
+                            if delta.is_empty() {
+                                return vec![];
+                            }
+                            let key = format!(
+                                "claude-msg:{}",
+                                self.claude_msg_id.as_deref().unwrap_or("current")
+                            );
+                            self.text.entry(key).or_default().push_str(&delta);
+                            vec![Event::AssistantDelta { text: delta }]
+                        }
+                        "thinking_delta" => {
+                            let delta = text(&ev["delta"], "thinking");
+                            if delta.is_empty() {
+                                return vec![];
+                            }
+                            vec![Event::Reasoning {
+                                id: block_id(),
+                                text: delta,
+                            }]
+                        }
+                        _ => vec![],
+                    },
                     _ => vec![],
                 }
             }
@@ -393,12 +520,12 @@ impl Stream {
                 if let Some(blocks) = msg["content"].as_array() {
                     for block in blocks {
                         match block["type"].as_str().unwrap_or_default() {
-                            "text" => {
+                            "text" if parent.is_none() => {
                                 full_text.push_str(block["text"].as_str().unwrap_or_default());
                             }
                             "tool_use" => {
                                 let name = text(block, "name");
-                                if name == "TodoWrite" {
+                                if name == "TodoWrite" && parent.is_none() {
                                     if let Some(items) = block["input"]["todos"].as_array() {
                                         let todos = items
                                             .iter()
@@ -424,14 +551,24 @@ impl Stream {
                                 else {
                                     continue;
                                 };
+                                let detail = extract_claude_detail(&block["input"]);
                                 if self.tools.insert(id.clone()) {
-                                    let detail = extract_claude_detail(&block["input"]);
                                     events.push(Event::ToolStart {
                                         task_id: id.clone(),
                                         name,
                                         detail: detail.clone(),
                                     });
-                                    if let Some(d) = detail.filter(|s| !s.is_empty()) {
+                                }
+                                // Repeated records for one call carry the same
+                                // input; the card keeps the latest copy.
+                                events.push(Event::ToolInput {
+                                    task_id: id.clone(),
+                                    detail: detail.clone(),
+                                    input: bounded_input(&block["input"]),
+                                    parent: parent.clone(),
+                                });
+                                if let Some(d) = detail.filter(|s| !s.is_empty()) {
+                                    if self.claude_detailed.insert(id.clone()) {
                                         events.push(Event::ToolDelta {
                                             task_id: id,
                                             text: format!("{d}\n"),
@@ -875,5 +1012,114 @@ mod tests {
             matches!(&result[0], Event::Usage { turn: Some(t), .. } if t.input_tokens == Some(10) && t.elapsed_ms == Some(450))
         );
         assert!(matches!(&result[1], Event::TurnEnd { status, .. } if status == "completed"));
+    }
+    #[test]
+    fn claude_streams_reasoning_opens_tools_early_and_attaches_structured_input() {
+        let mut stream = Stream::new(Provider::Claude);
+        stream.fold_line(r#"{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_2"}},"parent_tool_use_id":null}"#);
+        let start = stream.fold_line(r#"{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}},"parent_tool_use_id":null}"#);
+        assert!(start.contains(&Event::Reasoning {
+            id: "msg_2:0".into(),
+            text: String::new()
+        }));
+        assert_eq!(
+            stream.fold_line(r#"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Checking the tests first."}},"parent_tool_use_id":null}"#),
+            vec![Event::Reasoning {
+                id: "msg_2:0".into(),
+                text: "Checking the tests first.".into()
+            }]
+        );
+        // Shape captured from Claude Code 2.1.302: the card opens while the
+        // input is still streaming.
+        assert_eq!(
+            stream.fold_line(r#"{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01","name":"Edit","input":{},"caller":{"type":"direct"}}},"parent_tool_use_id":null}"#),
+            vec![Event::ToolStart {
+                task_id: "toolu_01".into(),
+                name: "Edit".into(),
+                detail: None
+            }]
+        );
+        let line = r#"{"type":"assistant","message":{"id":"msg_2","content":[{"type":"tool_use","id":"toolu_01","name":"Edit","input":{"file_path":"src/lib.rs","old_string":"a","new_string":"b"}}]},"parent_tool_use_id":null}"#;
+        let assistant = stream.fold_line(line);
+        assert!(!assistant
+            .iter()
+            .any(|e| matches!(e, Event::ToolStart { .. })));
+        assert!(assistant.contains(&Event::ToolInput {
+            task_id: "toolu_01".into(),
+            detail: Some("src/lib.rs".into()),
+            input: serde_json::json!({"file_path":"src/lib.rs","old_string":"a","new_string":"b"}),
+            parent: None,
+        }));
+        assert!(assistant.contains(&Event::ToolDelta {
+            task_id: "toolu_01".into(),
+            text: "src/lib.rs\n".into()
+        }));
+        // A repeated record refreshes the input without repeating the detail line.
+        let again = stream.fold_line(line);
+        assert!(again.iter().any(|e| matches!(e, Event::ToolInput { .. })));
+        assert!(!again.iter().any(|e| matches!(e, Event::ToolDelta { .. })));
+    }
+    #[test]
+    fn claude_subagent_text_stays_out_of_the_answer_while_its_tools_nest() {
+        let mut stream = Stream::new(Provider::Claude);
+        assert!(stream
+            .fold_line(r#"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"inner"}},"parent_tool_use_id":"toolu_task"}"#)
+            .is_empty());
+        let events = stream.fold_line(r#"{"type":"assistant","message":{"id":"msg_sub","content":[{"type":"text","text":"Subagent notes"},{"type":"tool_use","id":"toolu_inner","name":"Grep","input":{"pattern":"TODO"}}]},"parent_tool_use_id":"toolu_task"}"#);
+        assert!(!events
+            .iter()
+            .any(|e| matches!(e, Event::AssistantDelta { .. })));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Event::ToolInput { task_id, parent: Some(parent), .. }
+                if task_id == "toolu_inner" && parent == "toolu_task"
+        )));
+    }
+    #[test]
+    fn claude_rate_limits_report_each_subscription_window() {
+        use crate::events::LimitWindow;
+        let mut stream = Stream::new(Provider::Claude);
+        // Captured from Claude Code 2.1.302 on a Claude Pro sign-in.
+        let events = stream.fold_line(r#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1794540600,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_disabled","isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":0.56,"resetsAt":1794540600},"seven_day":{"utilization":0.24,"resetsAt":1795032000}}},"uuid":"c06bdb5e","session_id":"8c85e3f8-d20b-49ad-89f0-2efc8b8506bc"}"#);
+        assert_eq!(
+            events,
+            vec![Event::RateLimit {
+                status: "allowed".into(),
+                windows: vec![
+                    LimitWindow {
+                        name: "five_hour".into(),
+                        utilization: Some(0.56),
+                        resets_at: Some(1794540600)
+                    },
+                    LimitWindow {
+                        name: "seven_day".into(),
+                        utilization: Some(0.24),
+                        resets_at: Some(1795032000)
+                    },
+                ]
+            }]
+        );
+        // Records without unified windows still describe the active window.
+        let events = stream.fold_line(r#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1794540600,"rateLimitType":"five_hour","utilization":0.9}}"#);
+        assert_eq!(
+            events,
+            vec![Event::RateLimit {
+                status: "allowed_warning".into(),
+                windows: vec![LimitWindow {
+                    name: "five_hour".into(),
+                    utilization: Some(0.9),
+                    resets_at: Some(1794540600)
+                }]
+            }]
+        );
+    }
+    #[test]
+    fn bounded_input_caps_large_file_contents_but_keeps_shape() {
+        let input = serde_json::json!({"file_path":"a.txt","content":"x".repeat(40_000)});
+        let value = bounded_input(&input);
+        let content = value["content"].as_str().unwrap();
+        assert!(content.ends_with("…[truncated]"));
+        assert!(content.len() < 20_000);
+        assert_eq!(value["file_path"], "a.txt");
     }
 }

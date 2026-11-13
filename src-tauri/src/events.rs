@@ -29,6 +29,19 @@ pub struct TodoItem {
     pub status: String,
 }
 
+/// One subscription usage window reported by a signed-in provider account,
+/// such as Claude's five-hour and seven-day limits.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct LimitWindow {
+    pub name: String,
+    /// Fraction of the window already used (0.0–1.0), when reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub utilization: Option<f64>,
+    /// Unix seconds when the window resets, when reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resets_at: Option<i64>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentEvent {
@@ -103,6 +116,28 @@ pub enum AgentEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         call_id: Option<String>,
         text: String,
+    },
+    /// Complete structured input for a tool card, reported after the
+    /// provider finishes streaming it. `parent` names the subagent call that
+    /// issued the tool, when it ran inside a subagent.
+    ToolInput {
+        task_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+        input: Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<String>,
+    },
+    /// Streamed reasoning for one thinking block. Empty text announces a
+    /// block whose content the provider keeps private.
+    Reasoning {
+        id: String,
+        text: String,
+    },
+    /// Subscription usage for the signed-in provider account.
+    RateLimit {
+        status: String,
+        windows: Vec<LimitWindow>,
     },
     Todos {
         items: Vec<TodoItem>,
