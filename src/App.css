@@ -623,3 +623,19 @@ kbd { font: inherit; }
   background: var(--blue, #3b82f6);
   border-color: var(--blue, #3b82f6);
 }
+
+/* Thinking blocks (streamed reasoning summaries) */
+.reasoning-block { border-radius: 7px; font-size: calc(11px * var(--ui-scale)); }
+.reasoning-head { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; padding: 5px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); text-align: left; cursor: pointer; }
+.reasoning-head:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.reasoning-head:disabled { cursor: default; }
+.reasoning-label { flex: 0 0 auto; font-weight: 500; }
+.reasoning-block.live .reasoning-label { color: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+.reasoning-preview { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.8; font-style: italic; }
+.reasoning-body { margin: 2px 10px 8px 30px; padding-left: 10px; border-left: 2px solid var(--border); color: var(--muted); font-size: calc(12px * var(--ui-scale)); animation: content-arrive 180ms var(--ease-out); }
+.reasoning-body .md { color: inherit; }
+@media (prefers-reduced-motion: reduce) { .reasoning-block.live .reasoning-label { animation: none; } }
+
+/* Structured tool details */
+.tool-subagent { padding: 0 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); font-size: calc(9.5px * var(--ui-scale)); text-transform: uppercase; letter-spacing: 0.04em; }
+.tool-diff { margin: 0 10px 10px; max-height: 320px; overflow: auto; border: 1px solid var(--control-border); border-radius: 6px; background: var(--control-bg); font: calc(11px * var(--ui-scale))/1.6 var(--code-font); }

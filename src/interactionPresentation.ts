@@ -15,6 +15,8 @@ export const interactionTool = (tool: string) => knownLabel(toolNames, tool) ?? 
 export const permissionScope = (scope: string) => knownLabel({
   once: 'This action only', turn: 'This turn', session: 'This provider session',
   localPersistent: 'Saved for this workspace',
+  projectPersistent: "Saved to the project's shared settings",
+  userPersistent: 'Saved for all your projects',
 }, scope) ?? scope;
 export const isApproval = (choice: ApprovalChoice) => /^(approve|accept|allow)/i.test(choice.decision);
 

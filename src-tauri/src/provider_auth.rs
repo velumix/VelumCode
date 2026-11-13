@@ -506,13 +506,6 @@ fn claude_login_error(screen: &str) -> bool {
     .any(|needle| text.contains(needle))
 }
 
-fn valid_claude_code(code: &str) -> bool {
-    (10..=4096).contains(&code.len())
-        && code
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"/-_.~#=".contains(&b))
-}
-
 #[tauri::command]
 pub async fn claude_auth_status() -> Result<ClaudeAuthStatus, String> {
     let path = crate::providers::Provider::Claude
@@ -584,9 +577,10 @@ pub fn claude_login_start(
     let mut cmd =
         crate::pty::build_command_with_args(&path, &["auth".into(), "login".into(), flag.into()]);
     cmd.cwd(&workspace);
-    // Keep browser launch inside the dialog instead of spawning an external window automatically.
-    cmd.env("BROWSER", "velum-noop-browser");
-    cmd.env("SSH_CONNECTION", "127.0.0.1 1 127.0.0.1 22");
+    // Claude Code opens the browser and completes sign-in through its own
+    // local callback. Anthropic's terms do not allow third-party apps to
+    // collect or relay Claude credentials, so Velum never asks for the code;
+    // it only watches for the CLI to finish.
     cmd.env("TERM", "xterm-256color");
     let writer = pair
         .master
@@ -638,17 +632,18 @@ pub fn claude_login_start(
                 );
                 break;
             }
-            if screen.contains("Paste code") {
-                if let Some(url) = claude_authorization_url(&screen) {
-                    let mut state = reading.snapshot.lock().unwrap();
-                    if state.phase == "starting" {
-                        *state = Snapshot {
-                            phase: "code",
-                            url: Some(url),
-                            message:
-                                "Sign in with Claude, then paste the code shown in your browser.",
-                        };
-                    }
+            if claude_authorization_url(&screen).is_some()
+                || screen.to_ascii_lowercase().contains("browser")
+            {
+                let mut state = reading.snapshot.lock().unwrap();
+                if state.phase == "starting" {
+                    // The printed link is the manual fallback that ends in a
+                    // code to paste; it is not offered here.
+                    *state = Snapshot {
+                        phase: "browser",
+                        url: None,
+                        message: "Claude Code opened your browser. Approve the sign-in there; this window updates when Claude Code finishes.",
+                    };
                 }
             }
         }
@@ -661,7 +656,7 @@ pub fn claude_login_start(
                     } else {
                         reading.finish(
                             "error",
-                            "Claude could not complete sign-in. Start again to get a fresh code.",
+                            "Claude Code could not complete sign-in. Start again, or run `claude auth login` in the Terminal view.",
                         );
                     }
                     return;
@@ -670,13 +665,12 @@ pub fn claude_login_start(
             }
             reading.finish(
                 "error",
-                "The sign-in process closed. Start again to get a fresh code.",
+                "The sign-in process closed. Start again, or run `claude auth login` in the Terminal view.",
             );
         }
     });
     std::thread::spawn(move || {
         let started = Instant::now();
-        let mut checking_since = None;
         loop {
             if !session.active() {
                 break;
@@ -688,33 +682,23 @@ pub fn claude_login_start(
                 } else {
                     session.finish(
                         "error",
-                        "Claude could not accept that sign-in. Start again for a fresh code.",
+                        "Claude Code could not complete sign-in. Start again, or run `claude auth login` in the Terminal view.",
                     );
                 }
                 break;
             }
             let phase = session.snapshot.lock().unwrap().phase;
-            if phase == "verifying" {
-                let since = checking_since.get_or_insert_with(Instant::now);
-                if since.elapsed() > Duration::from_secs(60) {
-                    session.finish(
-                        "error",
-                        "We could not verify the Claude sign-in. Check your connection and start again with a fresh code.",
-                    );
-                    break;
-                }
-            }
             if phase == "starting" && started.elapsed() > Duration::from_secs(30) {
                 session.finish(
                     "error",
-                    "Claude sign-in did not show an authorization URL in time. Start again or run `claude auth login` in the Terminal view.",
+                    "Claude Code did not start its sign-in in time. Start again, or run `claude auth login` in the Terminal view.",
                 );
                 break;
             }
             if started.elapsed() > Duration::from_secs(600) {
                 session.finish(
                     "error",
-                    "This sign-in expired. Start again to get a fresh code.",
+                    "This sign-in expired before Claude Code finished. Start again when you're ready.",
                 );
                 break;
             }
@@ -727,38 +711,6 @@ pub fn claude_login_start(
 #[tauri::command]
 pub fn claude_login_status(state: State<AuthState>, id: String) -> Result<Snapshot, String> {
     Ok(state.session(&id)?.snapshot.lock().unwrap().clone())
-}
-
-#[tauri::command]
-pub fn claude_login_submit(
-    state: State<AuthState>,
-    id: String,
-    code: String,
-) -> Result<(), String> {
-    let code = code.trim();
-    if !valid_claude_code(code) {
-        return Err(
-            "Paste only the authentication code shown by Claude (including the `#state` suffix if shown), without a URL or extra text."
-                .into(),
-        );
-    }
-    let session = state.session(&id)?;
-    {
-        let mut state = session.snapshot.lock().unwrap();
-        if state.phase != "code" {
-            return Err(
-                "This sign-in is not waiting for a code. Start again if it expired.".into(),
-            );
-        }
-        state.phase = "verifying";
-        state.url = None;
-        state.message = "Checking your Claude sign-in…";
-    }
-    if let Err(error) = session.write(&format!("{code}\r")) {
-        session.finish("error", "The sign-in session ended. Start again.");
-        return Err(error);
-    }
-    Ok(())
 }
 
 #[tauri::command]
@@ -810,7 +762,7 @@ mod tests {
         assert!(!text.contains("Select login method:"));
     }
     #[test]
-    fn wrapped_claude_oauth_url_and_code_validate_cleanly() {
+    fn wrapped_claude_oauth_url_is_recognized_without_collecting_codes() {
         let screen = "If the browser didn't open, visit:\n https://claude.com/cai/oauth/authorize?code=true&client_id=abc&\n code_challenge=xyz&state=st1\n\nPaste code here if prompted >";
         assert_eq!(
             claude_authorization_url(screen).unwrap(),
@@ -825,11 +777,6 @@ mod tests {
             "https://evil.example/cai/oauth/authorize?state=s&code_challenge=c"
         )
         .is_none());
-        assert!(valid_claude_code("abc123_XYZ#state_part-99=="));
-        assert!(!valid_claude_code(
-            "https://platform.claude.com/oauth/code/callback?code=a"
-        ));
-        assert!(!valid_claude_code("code with space"));
         assert!(claude_login_error(
             "Login failed: Request failed with status code 400"
         ));

@@ -41,3 +41,13 @@
 @media (prefers-reduced-motion: reduce) {
   .context-ring-fill, .usage-chevron { transition: none; }
 }
+
+/* Subscription windows reported by the signed-in account */
+.usage-plan { white-space: nowrap; }
+.usage-plan.warning, .usage-plan.warning strong { color: var(--warning); }
+.usage-plan.critical, .usage-plan.critical strong { color: var(--danger); }
+.usage-plan-window + .usage-plan-window { margin-top: 10px; }
+.usage-plan-window > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: calc(11px * var(--ui-scale)); }
+.usage-plan-window strong { font-weight: 500; font-variant-numeric: tabular-nums; }
+.usage-plan-window .usage-meter { margin-top: 6px; }
+.usage-plan-window p { margin: 5px 0 0; }

@@ -1,39 +1,44 @@
-use crate::{codex_control, events::AgentEvent, interactions::Broker, muse_msp};
+use crate::{claude_control, codex_control, events::AgentEvent, interactions::Broker, muse_msp};
 use std::sync::Arc;
 
 pub enum Client {
-    // Boxed: both clients are several hundred bytes and the enum travels by value.
+    // Boxed: the clients are several hundred bytes and the enum travels by value.
     Muse(Box<muse_msp::Client>),
     Codex(Box<codex_control::Client>),
+    Claude(Box<claude_control::Client>),
 }
 impl Client {
     pub fn broker(&self) -> &Arc<Broker> {
         match self {
             Self::Muse(client) => &client.broker,
             Self::Codex(client) => &client.broker,
+            Self::Claude(client) => &client.broker,
         }
     }
     pub fn session_id(&self) -> &Option<String> {
         match self {
             Self::Muse(client) => &client.session_id,
             Self::Codex(client) => &client.session_id,
+            Self::Claude(client) => &client.session_id,
         }
     }
     pub fn run_id(&self) -> &Option<String> {
         match self {
             Self::Muse(client) => &client.run_id,
             Self::Codex(client) => &client.run_id,
+            Self::Claude(client) => &client.run_id,
         }
     }
     pub fn denied(&self) -> bool {
         match self {
             Self::Muse(client) => client.denied,
             Self::Codex(client) => client.denied,
+            Self::Claude(client) => client.denied,
         }
     }
     pub fn effective(&self) -> Option<&serde_json::Value> {
         match self {
-            Self::Muse(_) => None,
+            Self::Muse(_) | Self::Claude(_) => None,
             Self::Codex(client) => client.effective.as_ref(),
         }
     }
@@ -41,18 +46,21 @@ impl Client {
         match self {
             Self::Muse(client) => client.settling(),
             Self::Codex(client) => client.settling(),
+            Self::Claude(client) => client.settling(),
         }
     }
     pub fn poll(&mut self) -> Result<(), String> {
         match self {
             Self::Muse(client) => client.poll(),
             Self::Codex(client) => client.poll(),
+            Self::Claude(client) => client.poll(),
         }
     }
     pub fn observe_line(&mut self, line: &str) -> Result<Vec<AgentEvent>, String> {
         match self {
             Self::Muse(client) => client.observe_line(line),
             Self::Codex(client) => client.observe_line(line),
+            Self::Claude(client) => client.observe_line(line),
         }
     }
 }

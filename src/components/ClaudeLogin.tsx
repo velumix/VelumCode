@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import Icon, { VelumMark } from "./Icon";
 import "./AntigravityLogin.css";
 
 type ClaudeMode = "claudeai" | "console";
-interface Status { phase: "starting" | "code" | "verifying" | "complete" | "error"; url: string | null; message: string }
+interface Status { phase: "starting" | "browser" | "complete" | "error"; url: string | null; message: string }
 export interface ClaudeAuthStatus {
   loggedIn: boolean;
   authMethod?: string | null;
@@ -15,15 +14,18 @@ export interface ClaudeAuthStatus {
   subscriptionType?: string | null;
 }
 
+/**
+ * Claude Code signs in through its own browser flow and local callback.
+ * Anthropic's terms don't allow other apps to collect or relay Claude
+ * credentials, so this dialog never asks for a code: it starts
+ * `claude auth login` and waits for Claude Code to finish.
+ */
 export default function ClaudeLogin({ onClose, onAuthChanged }: { onClose: () => void; onAuthChanged?: (status: ClaudeAuthStatus | null) => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const input = useRef<HTMLInputElement>(null);
-  const current = useRef("");
   const [mode, setMode] = useState<ClaudeMode>("claudeai");
   const [attempt, setAttempt] = useState(0);
   const [authStatus, setAuthStatus] = useState<ClaudeAuthStatus | null>(null);
-  const [status, setStatus] = useState<Status>({ phase: "starting", url: null, message: "Preparing Claude sign-in…" });
-  const [code, setCode] = useState("");
+  const [status, setStatus] = useState<Status>({ phase: "starting", url: null, message: "Starting Claude Code sign-in…" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -32,8 +34,10 @@ export default function ClaudeLogin({ onClose, onAuthChanged }: { onClose: () =>
       const next = await invoke<ClaudeAuthStatus>("claude_auth_status");
       setAuthStatus(next);
       onAuthChanged?.(next);
+      return next;
     } catch {
       /* Auth status check is informational. */
+      return null;
     }
   };
 
@@ -46,26 +50,22 @@ export default function ClaudeLogin({ onClose, onAuthChanged }: { onClose: () =>
   }, []);
 
   useEffect(() => {
-    const id = crypto.randomUUID(); current.current = id;
+    const id = crypto.randomUUID();
     let disposed = false;
     let timer: number | undefined;
-    setCode(""); setError(""); setBusy(false);
-    setStatus({ phase: "starting", url: null, message: "Preparing Claude sign-in…" });
+    setError(""); setBusy(false);
+    setStatus({ phase: "starting", url: null, message: "Starting Claude Code sign-in…" });
     const starting = invoke("claude_login_start", { id, mode });
     const poll = async () => {
       try {
         const result = await invoke<Status>("claude_login_status", { id });
         if (disposed) return;
         setStatus(result);
-        if (result.phase === "complete") {
-          setCode("");
-          void refreshAuthStatus();
-          return;
-        }
-        if (result.phase === "error") { setCode(""); return; }
-        timer = window.setTimeout(() => void poll(), 400);
+        if (result.phase === "complete") { void refreshAuthStatus(); return; }
+        if (result.phase === "error") return;
+        timer = window.setTimeout(() => void poll(), 500);
       } catch {
-        if (!disposed) setStatus({ phase: "error", url: null, message: "The sign-in session ended. Start again to get a fresh code." });
+        if (!disposed) setStatus({ phase: "error", url: null, message: "The sign-in session ended. Start again when you're ready." });
       }
     };
     void starting.then(() => { if (!disposed) void poll(); }).catch((e) => {
@@ -77,17 +77,14 @@ export default function ClaudeLogin({ onClose, onAuthChanged }: { onClose: () =>
     };
   }, [attempt, mode]);
 
-  useEffect(() => { if (status.phase === "code") input.current?.focus(); }, [status.phase]);
-
-  const submit = async () => {
-    if (busy || status.phase !== "code" || !code.trim()) return;
+  // Covers a sign-in finished elsewhere, such as `claude auth login` in Terminal.
+  const check = async () => {
+    if (busy) return;
     setBusy(true); setError("");
-    const value = code.trim(); setCode("");
-    try {
-      await invoke("claude_login_submit", { id: current.current, code: value });
-      setStatus({ phase: "verifying", url: null, message: "Checking your Claude sign-in…" });
-    } catch (e) { setError(String(e)); }
-    finally { setBusy(false); }
+    const next = await refreshAuthStatus();
+    setBusy(false);
+    if (next?.loggedIn) setStatus({ phase: "complete", url: null, message: "Claude is connected." });
+    else setError("Claude Code isn't signed in yet. Finish in your browser, or run `claude auth login` in the Terminal view.");
   };
 
   const logout = async () => {
@@ -114,22 +111,28 @@ export default function ClaudeLogin({ onClose, onAuthChanged }: { onClose: () =>
     <VelumMark size={48} />
     <span className="auth-eyebrow">YOUR PROVIDERS</span>
     <h2 id="auth-title">{status.phase === "complete" ? "You're connected." : "Connect Claude"}</h2>
-    <p className="auth-description">{status.phase === "complete" ? "Your Claude account is ready. Return to your conversation and send your message when you're ready." : accountSummary ? `Currently signed in (${accountSummary}). Sign in below to refresh or switch accounts.` : "One Claude sign-in (`claude auth login`). Rock Claude right here in Velum Code."}</p>
+    <p className="auth-description">{status.phase === "complete"
+      ? "Your Claude account is ready. Return to your conversation and send your message when you're ready."
+      : accountSummary
+        ? `Currently signed in (${accountSummary}). Sign in again below to refresh or switch accounts.`
+        : "Sign in with your Claude account. Claude Code handles the whole sign-in in your browser; Velum never sees your credentials."}</p>
     {status.phase !== "complete" && <div className="auth-modes" role="group" aria-label="Claude sign-in account type">
       <button type="button" className={`auth-mode${mode === "claudeai" ? " active" : ""}`} disabled={busy} onClick={() => setMode("claudeai")}>Claude subscription</button>
       <button type="button" className={`auth-mode${mode === "console" ? " active" : ""}`} disabled={busy} onClick={() => setMode("console")}>Anthropic Console API</button>
     </div>}
     <div className={`auth-status ${status.phase}`} role={status.phase === "error" ? "alert" : "status"}>{status.message}</div>
-    {status.phase === "code" && <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
-      <div className="auth-step"><span>1</span><div><h3>Sign in with Claude</h3><p>Your browser will display a one-time authentication code after you approve.</p>
-        <button type="button" className="auth-browser" onClick={() => void openUrl(status.url!).catch(() => setError("Could not open your browser. Try again."))}>Open Claude sign-in <Icon name="arrow" size={16} /></button></div></div>
-      <div className="auth-step"><span>2</span><div><label htmlFor="auth-code">Paste your authentication code</label><input ref={input} id="auth-code" type="password" autoComplete="off" spellCheck={false} maxLength={4096} value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code from your browser (including #state)" aria-describedby="auth-code-help" />
-        <p id="auth-code-help">Paste the complete code string shown in your browser. Older codes won't work.</p></div></div>
-      {error && <p className="auth-error" role="alert">{error}</p>}
-      <button className="auth-primary" type="submit" disabled={busy || !code.trim()}>Connect Claude account</button>
-    </form>}
-    {status.phase !== "code" && error && <p className="auth-error" role="alert">{error}</p>}
-    {status.phase === "complete" ? <button className="auth-primary" onClick={onClose}>Back to conversation</button> : <div className="auth-actions"><button onClick={onClose}>Cancel</button>{status.phase !== "starting" && <button disabled={busy} onClick={() => setAttempt((n) => n + 1)}>Start again</button>}{authStatus?.loggedIn && <button disabled={busy} onClick={() => void logout()}>Sign out</button>}</div>}
-    <p className="auth-footnote">Claude Code saves credentials in its own credential store. Velum Code never stores your pasted code.</p>
+    {status.phase === "browser" && <div className="auth-step"><span>1</span><div><h3>Approve in your browser</h3>
+      <p>Claude Code opened a sign-in page. Approve it there and Claude Code finishes on its own.</p>
+      <p>No browser window? Run <code>claude auth login</code> in this tab's Terminal view, then choose <strong>Check sign-in</strong>.</p></div></div>}
+    {error && <p className="auth-error" role="alert">{error}</p>}
+    {status.phase === "complete"
+      ? <button className="auth-primary" onClick={onClose}>Back to conversation</button>
+      : <div className="auth-actions">
+          <button onClick={onClose}>Cancel</button>
+          {status.phase !== "starting" && <button disabled={busy} onClick={() => setAttempt((n) => n + 1)}>Start again</button>}
+          <button disabled={busy} onClick={() => void check()}>Check sign-in</button>
+          {authStatus?.loggedIn && <button disabled={busy} onClick={() => void logout()}>Sign out</button>}
+        </div>}
+    <p className="auth-footnote">Claude Code keeps your credentials in its own credential store. Velum only reads whether you're signed in.</p>
   </dialog>;
 }

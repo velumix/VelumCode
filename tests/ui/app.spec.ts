@@ -249,12 +249,22 @@ test("Claude auth login supports subscription and console modes and keeps codes 
   await composer(page).fill("Keep this Claude draft");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Connect Claude" });
-  await expect(dialog.getByLabel("Paste your authentication code")).toBeFocused();
-  await expect(dialog.getByRole("button", { name: "Connect Claude account" })).toBeDisabled();
+  await expect(dialog.getByRole("heading", { name: "Approve in your browser" })).toBeVisible();
+  await expect(dialog.getByLabel("Paste your authentication code")).toHaveCount(0);
   await dialog.getByRole("button", { name: "Anthropic Console API" }).click();
   await expect.poll(() => page.evaluate(() => (window as any).qa.calls.some((c: any) => c.cmd === "claude_login_start" && c.args.mode === "console"))).toBe(true);
-  await dialog.getByLabel("Paste your authentication code").fill("fixture-claude-code#state123");
-  await dialog.getByRole("button", { name: "Connect Claude account" }).click();
+  await page.evaluate(() => {
+    const qa = (window as any).qa;
+    qa.claudeAuth = {
+      loggedIn: true,
+      authMethod: "claude.ai",
+      apiProvider: "firstParty",
+      email: "dev@example.com",
+      orgName: null,
+      subscriptionType: "max",
+    };
+  });
+  await dialog.getByRole("button", { name: "Check sign-in" }).click();
   await page.getByRole("button", { name: "Back to conversation" }).click();
   await expect(composer(page)).toHaveValue("Keep this Claude draft");
   await expect(page.getByText("Claude signed in · dev@example.com")).toBeVisible();

@@ -3,6 +3,7 @@ mod automation;
 mod bot_actions;
 mod bots;
 mod child_process;
+mod claude_control;
 mod codex_control;
 mod desktop;
 mod events;
@@ -155,7 +156,6 @@ pub fn run() {
             provider_auth::claude_auth_logout,
             provider_auth::claude_login_start,
             provider_auth::claude_login_status,
-            provider_auth::claude_login_submit,
             provider_auth::claude_login_cancel,
             pty::pty_write,
             pty::pty_resize,
