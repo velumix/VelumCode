@@ -2,7 +2,7 @@
 
 **DRAFT FOR OWNER AND LEGAL REVIEW — NOT YET A FINAL PUBLISHER NOTICE.**
 
-Behavior reviewed: desktop 0.7.32 and Android companion 0.6.1, November 11, 2026.
+Behavior reviewed: desktop 0.7.33 and Android companion 0.6.1, November 12, 2026.
 Effective date: **[EFFECTIVE_DATE]**.
 Publisher: **[PUBLISHER_LEGAL_NAME]**, **[PUBLISHER_COUNTRY_AND_STATE]**.
 Privacy contact: **[PRIVACY_CONTACT_EMAIL]**.
