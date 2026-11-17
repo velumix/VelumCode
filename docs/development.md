@@ -8,7 +8,7 @@ Run the commands below from the repository root.
 
 - Node.js 24 + npm (the tested version is pinned in `.node-version`)
 - Rust via rustup + MSVC build tools (the tested toolchain is pinned in `rust-toolchain.toml`)
-- At least one supported CLI: `muse`, `codex`, or `agy`, installed and signed in
+- At least one supported CLI: `claude`, `bonsai` ([Bonsai 2 local GPU](bonsai.md)), `codex`, `agy`, or `muse`
 
 ## Develop
 
@@ -36,8 +36,10 @@ installer, signature and `latest.json` updater feed under `artifacts/release`.
 For a preview without signing secrets, use:
 
 ```powershell
-npx tauri build --bundles nsis --config src-tauri/tauri.preview.conf.json
+npx.cmd tauri build --bundles nsis --config src-tauri/tauri.preview.conf.json
 ```
+
+> Use `npx.cmd tauri build` (not raw `cargo build --release`) when building standalone `.exe` binaries so `tauri/custom-protocol` embeds `dist/` cleanly instead of connecting to `localhost:1420`.
 
 See [App updates](updates.md) for GitHub release automation and the first updater
 installation.

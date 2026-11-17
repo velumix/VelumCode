@@ -1,6 +1,6 @@
 # Skills for Velum Code
 
-Skills are Markdown instruction packs your agent follows when they fit the task: a review method, a writing style, a release checklist. Open **Skills** in the sidebar to browse the community directory, install from any GitHub repository, or write your own. Turn skills on per conversation with **Skills** beside the composer. A skill's text is added to the turn prompt for Muse, Codex and Antigravity alike; installing a skill never runs code and grants no tool permissions.
+Skills are Markdown instruction packs your agent follows when they fit the task: a review method, a writing style, a release checklist. Open **Skills** in the sidebar to browse the community directory, search public GitHub `SKILL.md` repositories, or write your own. Turn skills on per conversation with **Skills** beside the composer. A skill's text is added to the turn prompt for **Claude Code**, **Bonsai 2**, **Muse**, **Codex**, and **Antigravity** alike; installing a skill never runs code and grants no tool permissions.
 
 ## Try Review checklist
 

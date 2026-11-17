@@ -1,6 +1,6 @@
 # Memory vault
 
-Velum Code keeps durable context as local Markdown files. It shares the same vault across Muse, Codex and Antigravity, while separating project facts from shared preferences. The desktop is the source of truth; the paired phone edits it through the authenticated remote API.
+Velum Code keeps durable context as local Markdown files. It shares the same vault across **Claude Code**, **Bonsai 2**, **Muse**, **Codex**, and **Antigravity**, while separating project facts from shared preferences. The desktop is the source of truth; the paired phone edits it through the authenticated remote API.
 
 ## Everyday use
 

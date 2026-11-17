@@ -1,48 +1,40 @@
-# A focused place to create
+# Interactive studio chat & conversation UX
 
-Start with an idea in the composer. **Build something**, **Improve what's here**, and **Understand a project** prepare an editable request. They preserve an existing draft and wait for you to send it.
+Velum Code translates CLI transcripts from **Claude Code**, **Bonsai 2**, **Codex**, **Google Antigravity**, and **Muse** into one clean interactive studio without losing per-provider power.
+
+[Documentation](README.md) · [Multi-provider swarm](swarm.md) · [Bonsai 2 local GPU](bonsai.md)
 
 ![Focused conversation with expandable activity](images/focused-conversation.png)
 
-## Keep attention on the work
+## Reading, diffs & interactive markdown
 
-- **Assistant settings** shows the provider, model, and reasoning level. Open it to change those choices or pick a bot.
-- **Project folder** beneath the composer opens the folder picker and path editor. Applying a different project starts a fresh conversation; the explanation appears before applying it.
-- Answers have a clear reading surface. Consecutive tool actions appear in one expandable activity group, with blocked or failed actions called out even while closed.
-- Open the task summary to inspect the checklist. The composer and existing queue remain available while the agent works.
+- **Theme-safe syntax highlighting**: Code blocks tokenize TS/JS/TSX, Rust, Python, Luau, JSON, Shell/PowerShell, CSS, TOML/YAML, and SQL using contrast-verified colors across all twelve dark, light, and Crystal Glass themes.
+- **Code block actions**: Headers expose clickable file badges (`tsx:src/App.tsx`), line counts, a **Wrap** toggle, **Insert** (into composer), **Run** (for shell snippets), and clean raw-text **Copy**.
+- **Clickable file pills**: Inline file references (`src/App.tsx`, `src-tauri/src/providers.rs`, `file:///...`) render as interactive chips that jump straight into **Split Studio → Diff** for that file.
+- **GitHub alerts**: Blockquotes beginning with `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, or `[!CAUTION]` render as semantic callouts.
+- **Image input & lightbox**: Drag, paste (`Ctrl+V`), or click the image icon to attach PNG/JPEG/WebP/GIF/SVG screenshots or mockups; click thumbnails in sent messages to open the full-screen lightbox viewer.
 
-Under **Settings > Preferences > Conversation preferences**, turn off **Compact assistant controls** or **Group agent activity** if you prefer the full controls and individual tool cards. Themes, glass, typography, and layout preferences still apply. On a phone, assistant settings open from a disclosure above the conversation.
+## Actionable activity cards & Swarm Worker Grid
 
-## Review an action
+Consecutive tool invocations fold cleanly into an expandable **Agent activity** card so long tool runs never flood the reading feed:
 
-Permission requests sit inside the conversation as compact cards. A short command or affected-file preview appears above **Allow once** and the provider's rejection action. **Details** keeps the full request available, including long commands and proposed patches.
+- **Live collapsed telemetry**: Even before expanding, `AgentActivity` displays live thought snippets, category counters (`Files`, `Shell`, `Git`, `MCP`), Swarm worker counts, and clickable **file pills** with `+add / -del` line stats. Failures and blocks always highlight automatically.
+- **Category-styled tool cards**: Expanded tool cards show color-coded left borders per category, duration telemetry, 1-click **Diff** buttons on file tools, and inline unified diffs for `edit_file` / `write_file`.
+- **Swarm Worker Cards**: Calling `run_swarm`, `delegate_task`, or `swarm_board` displays a multi-column **Swarm Worker Grid** showing each delegated model (`bonsai-fast`, `claude`, `codex`, etc.), status, runtime seconds, and summary right inside the card.
+- **Mission Plan (`todos`)**: Active task checklists display a compact progress bar beside the composer and expand into a full status checklist (`✓`, `◉`, `○`).
 
-Open **Add guidance** to suggest another approach when declining. **More options** contains broader grants with their scope and any proposed saved rule visible before you select one. Velum only offers the choices supplied by the provider. Buttons stay disabled while a response is being confirmed.
+Under **Settings → Preferences → Conversation preferences**, turn off **Compact assistant controls** or **Group agent activity** if you prefer always-expanded controls or ungrouped tool cards.
 
-Questions show their choices first; **Write your own answer** opens an optional text field and changes to **Edit your answer** once filled. Selection limits apply before sending. Completed requests and permission records collapse into small reviewable rows. Desktop and phone use the same controls, with larger touch targets on the phone. A phone without control access can inspect the request but cannot answer it.
+## Studio layout modes & Turn controls
 
-## Recover a request
+Use the chat header's view toggle (**Stream**, **Split**, **Dashboard**) to keep just the conversation or open **Session Dashboard** beside it for live **Diff**, **Tasks**, **Tools Log** (with category filtering & command search), **Telemetry**, and **GitHub Hub**.
 
-Failed, blocked, stopped, and unsent requests offer **Retry request** and **Revise request** on desktop. Failed, blocked, and stopped turns have the same controls on a phone with control access. Revise opens a separate editor containing the original request; retrying keeps your follow-up draft in the main composer. Reopened conversations retain recovery controls when the original request is still in the saved transcript.
+- **Prompt Edit & Resend / Re-run**: Hover any previous user prompt to **Edit and resend message** inline or **Re-run** without scrolling back to copy/paste.
+- **Assistant Actions**: Every completed reply includes **Correct response**, **Retry** (re-running the preceding prompt), **Inspect diff (N)** when files changed, and **Remember** to seed a Markdown note.
+- **Turn Scorecard & Follow-ups**: The latest completed assistant reply displays a scoped **Turn complete** scorecard with touched file chips, one-click **Quick follow-ups** (`Run tests`, `Review diff`, `Summarize changes`), and recommended peer **Hand off** buttons.
 
-Review any partial changes before retrying, and resolve a reported permission issue first. The retry sends the original or edited request to the same conversation with its current settings. When messages are already queued, **Queue retry** adds it to the end; a paused queue waits for you to resume it. A newer request retires the previous turn's recovery controls.
+## Review permissions, questions & queues
 
-A phone can send up to 16,000 characters. If a desktop request exceeds that limit, the recovery editor keeps the full text and asks you to shorten it before retrying.
-
-## Help the next attempt
-
-Choose **Correct response** below a completed answer. Describe what should change, then send the correction. Velum includes a short excerpt of that answer so the agent can identify it. Your separate composer draft stays intact. If another response is active, the correction enters the same message queue.
-
-To keep a durable lesson, select **Remember a lesson for this project**, review **Lesson for next time**, and choose **Send & save lesson**. Write a short, specific rule, such as “Preserve existing public APIs unless a breaking change is requested.” The checkbox starts off; typing a correction alone saves no lesson.
-
-Reviewed lessons become active, pinned project notes in [Memory](memory.md). They are eligible for future context with Muse, Codex, and Antigravity, within the project's memory budget. A bot saves the lesson in its own memory. Memory disabled for that project remains disabled, and the confirmation explains this. Matching notes are reused rather than duplicated.
-
-If sending fails, the correction stays editable and no lesson is saved. If the correction sends but saving fails, **Retry saving lesson** retries only the save. You can edit or archive lessons in Memory. Keeping lessons concise leaves more room for other useful context.
-
-## Review suggestions
-
-The agent may propose facts or lessons from user-confirmed corrections after a successful turn. An error by itself is insufficient evidence for a lesson. With the default memory setting, suggestions wait for your review; a count on **Memory** opens directly to **Review**.
-
-Learning here means supplying reviewed local reference notes to future requests. It does not train the provider's model or guarantee the provider will follow every note. The existing memory reuse and context limits still apply.
-
-Phone corrections follow the same flow. A paired device needs control permission to send or save, and losing access disables those actions.
+- **Interactive approvals**: Permission prompts and multi-choice questions appear inside the stream with previews, **Allow once**, **Details**, and **Add guidance** when declining; phone clients with control permission share the same controls.
+- **Message Queue**: Sending while an agent is working appends to an ordered queue above the composer with Pause, Resume, Edit, and Remove controls synced with any paired phone.
+- **Recovery & Corrections**: Interrupted or failed turns expose **Retry request** and **Revise request**. Clicking **Correct response** lets you steer the answer while keeping any unfinished draft in your main composer untouched, with an explicit opt-in checkbox to save a **Lesson for next time** into [Memory](memory.md).

@@ -1,9 +1,9 @@
 # Agent tools
 
-[Documentation](README.md) · [Project context](project-context.md) · [Usage](usage.md)
+[Documentation](README.md) · [Multi-provider swarm](swarm.md) · [Project context](project-context.md) · [Usage](usage.md)
 
 Velum supplies a local MCP bridge for the provider launched in a conversation.
-Open **Settings → Preferences → Agent tools** to control it. The bridge runs
+Open **Tools** directly beside the composer (or **Settings → Preferences → Agent tools**) to control it. The bridge runs
 on the desktop host and is bound to the current turn, selected project and
 current bot. A bot's shared-memory opt-in is respected; turning it off excludes the shared/project vault from that bot's search. Its permissions are separate from the CLI's shell sandbox.
 YOLO does not enable desktop screenshots or native input.
@@ -24,6 +24,7 @@ YOLO does not enable desktop screenshots or native input.
 | `browser_open`, `browser_snapshot`, `browser_action`, `browser_screenshot` | An isolated headless Edge/Chrome preview with navigation, semantic snapshots, CSS actions, page evaluation and PNG capture. Requires installed Edge/Chrome and Node.js 22 or newer. |
 | `native_windows`, `native_screenshot` | Visible Windows window discovery and capture of a chosen window rectangle, when desktop screenshot permission is enabled |
 | `native_input` | Focus, window-relative clicks, Unicode typing and supported keys, when native input permission is enabled |
+| `swarm_list_providers`, `swarm_delegate_task`, `swarm_run`, `swarm_board` | Discover installed CLIs/bots, delegate single subtasks, launch 2–6 parallel worker subtasks, and read/post shared swarm boards when **Multi-provider swarm delegation** is enabled. See [Multi-provider swarm](swarm.md). |
 
 Workspace file tools require a project directory; the initial user-profile
 root is not a project. Git metadata is read only by the purpose-built status
@@ -83,9 +84,7 @@ recall data already received by the provider.
 
 ## Provider registration
 
-Codex receives a per-turn `mcp_servers.velum_code` stdio configuration. Muse
-and Antigravity currently have no equivalent run overlay in their installed
-interfaces, so Velum merges a credential-free `velum_code` stdio entry into:
+Codex receives a per-turn `mcp_servers.velum_code` stdio configuration. Claude Code receives per-turn `--mcp-config` wiring when needed, Bonsai 2 receives both built-in workspace/swarm tools and any configured MCP bridges (`127.0.0.1:8081` + `velum_code`), and Muse and Antigravity receive a credential-free `velum_code` stdio entry merged into:
 
 - Muse: `$XDG_CONFIG_HOME/muse/settings.json`, or `~/.config/muse/settings.json`.
 - Antigravity: `~/.gemini/config/mcp_config.json`.

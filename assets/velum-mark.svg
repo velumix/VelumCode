@@ -1,9 +1,98 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
   <defs>
-    <linearGradient id="left" x1="188" y1="180" x2="560" y2="850" gradientUnits="userSpaceOnUse"><stop stop-color="#77B6FF"/><stop offset="1" stop-color="#225AC9"/></linearGradient>
-    <linearGradient id="right" x1="795" y1="170" x2="470" y2="840" gradientUnits="userSpaceOnUse"><stop stop-color="#BBDEFF"/><stop offset=".48" stop-color="#539AFF"/><stop offset="1" stop-color="#2762D7"/></linearGradient>
+    <linearGradient id="crownL" x1="96" y1="148" x2="344" y2="210" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#BAE6FD"/>
+      <stop offset="1" stop-color="#60A5FA"/>
+    </linearGradient>
+    <linearGradient id="crownR" x1="928" y1="148" x2="680" y2="210" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F0F9FF"/>
+      <stop offset="1" stop-color="#7DD3FC"/>
+    </linearGradient>
+    <linearGradient id="flankL" x1="110" y1="160" x2="512" y2="910" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#60A5FA"/>
+      <stop offset=".45" stop-color="#38BDF8"/>
+      <stop offset="1" stop-color="#1E40AF"/>
+    </linearGradient>
+    <linearGradient id="flankR" x1="914" y1="160" x2="512" y2="910" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#93C5FD"/>
+      <stop offset=".45" stop-color="#3B82F6"/>
+      <stop offset="1" stop-color="#1E3A8A"/>
+    </linearGradient>
+    <linearGradient id="coreL" x1="210" y1="210" x2="512" y2="790" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#172554"/>
+      <stop offset=".55" stop-color="#1D4ED8"/>
+      <stop offset="1" stop-color="#0284C7"/>
+    </linearGradient>
+    <linearGradient id="coreR" x1="814" y1="210" x2="512" y2="790" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1E3A8A"/>
+      <stop offset=".55" stop-color="#2563EB"/>
+      <stop offset="1" stop-color="#0EA5E9"/>
+    </linearGradient>
+    <linearGradient id="causticL" x1="210" y1="276" x2="368" y2="480" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#67E8F9" stop-opacity=".75"/>
+      <stop offset="1" stop-color="#38BDF8" stop-opacity=".18"/>
+    </linearGradient>
+    <linearGradient id="causticR" x1="814" y1="276" x2="656" y2="480" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#A5F3FC" stop-opacity=".8"/>
+      <stop offset="1" stop-color="#0EA5E9" stop-opacity=".2"/>
+    </linearGradient>
+    <linearGradient id="innerL" x1="344" y1="148" x2="512" y2="652" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1E293B"/>
+      <stop offset=".6" stop-color="#1E40AF"/>
+      <stop offset="1" stop-color="#38BDF8"/>
+    </linearGradient>
+    <linearGradient id="innerR" x1="680" y1="148" x2="512" y2="652" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7DD3FC"/>
+      <stop offset=".5" stop-color="#2563EB"/>
+      <stop offset="1" stop-color="#0F172A"/>
+    </linearGradient>
+    <linearGradient id="keelL" x1="484" y1="560" x2="512" y2="932" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#BAE6FD"/>
+      <stop offset=".55" stop-color="#38BDF8"/>
+      <stop offset="1" stop-color="#1D4ED8"/>
+    </linearGradient>
+    <linearGradient id="diamondTop" x1="512" y1="136" x2="512" y2="294" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F0F9FF"/>
+      <stop offset="1" stop-color="#BAE6FD"/>
+    </linearGradient>
+    <linearGradient id="keelR" x1="540" y1="560" x2="512" y2="932" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2563EB"/>
+      <stop offset=".6" stop-color="#1E3A8A"/>
+      <stop offset="1" stop-color="#0F172A"/>
+    </linearGradient>
   </defs>
-  <path d="M124 176h218l194 477-104 195L124 176Z" fill="url(#left)"/>
-  <path d="M697 176h205L594 848H432L697 176Z" fill="url(#right)"/>
-  <path d="m697 176-161 477-104 195 238-672h27Z" fill="#D5E9FF" fill-opacity=".25"/>
+
+  <!-- Chiseled 3D Crystal V (100% transparent background) -->
+  <path d="M96 148H344L292 210H172L96 148Z" fill="url(#crownL)"/>
+  <path d="M928 148H680L732 210H852L928 148Z" fill="url(#crownR)"/>
+
+  <path d="M96 148L172 210L512 816V932L96 148Z" fill="url(#flankL)"/>
+  <path d="M928 148L852 210L512 816V932L928 148Z" fill="url(#flankR)"/>
+
+  <path d="M172 210H292L512 652V816L172 210Z" fill="url(#coreL)"/>
+  <path d="M852 210H732L512 652V816L852 210Z" fill="url(#coreR)"/>
+
+  <path d="M206 276H278L372 478H296L206 276Z" fill="url(#causticL)"/>
+  <path d="M818 276H746L652 478H728L818 276Z" fill="url(#causticR)"/>
+
+  <path d="M344 148L512 560V652L292 210L344 148Z" fill="url(#innerL)"/>
+  <path d="M680 148L512 560V652L732 210L680 148Z" fill="url(#innerR)"/>
+
+  <path d="M484 748L512 560V932L484 748Z" fill="url(#keelL)"/>
+  <path d="M540 748L512 560V932L540 748Z" fill="url(#keelR)"/>
+
+  <!-- Sharp Specular Crystal Ridges -->
+  <path d="M96 148L172 210L512 816L852 210L928 148" stroke="#BAE6FD" stroke-opacity=".75" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M344 148L292 210L512 652L732 210L680 148" stroke="#E0F2FE" stroke-opacity=".8" stroke-width="4.5" stroke-linejoin="round"/>
+  <path d="M512 560V932" stroke="#F0F9FF" stroke-opacity=".85" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- 6-Facet Cut Diamond Core -->
+  <path d="M512 136L462 294L396 286L512 136Z" fill="#BAE6FD"/>
+  <path d="M512 136L562 294H462L512 136Z" fill="url(#diamondTop)"/>
+  <path d="M512 136L628 286L562 294L512 136Z" fill="#38BDF8"/>
+  <path d="M396 286L462 294L512 444L396 286Z" fill="#7DD3FC"/>
+  <path d="M462 294H562L512 444L462 294Z" fill="#0EA5E9"/>
+  <path d="M562 294L628 286L512 444L562 294Z" fill="#0369A1"/>
+  <path d="M512 136L628 286L512 444L396 286Z" stroke="#0284C7" stroke-opacity=".55" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M512 136L462 294L512 444M512 136L562 294L512 444M396 286L462 294H562L628 286" stroke="#FFFFFF" stroke-opacity=".9" stroke-width="3.5" stroke-linejoin="round"/>
 </svg>

@@ -12,18 +12,18 @@ import { botPresets, type BotIdentity, type BotProfile, type BotView } from '../
 import BotAvatar, { type OrbStatus } from './BotAvatar';
 import UsageStrip from './UsageStrip';
 import MessageQueue from './MessageQueue';
-import AgentActivity from './AgentActivity';
+import AgentActivity, { type ActivityCategoryBadge, type ActivityFileChip } from './AgentActivity';
 import CorrectionComposer from './CorrectionComposer';
 import RequestRecovery from './RequestRecovery';
 import InteractionPanel, { PermissionRecord } from './InteractionPanel';
 import { emptyInteractions, mergeInteractionResponse, type InteractionSnapshot } from '../interactions';
-import { correctionPrompt, extractToolSnippet, filterSlashCommands, fmtToolDuration, friendlyTool, groupActivity, lastMatch, latestRecovery, lessonTitle, projectName, recoverableRequest, statusTone, type RecoverableRequest, type SlashCommand } from '../conversationUX';
+import { correctionPrompt, extractToolSnippet, filterSlashCommands, fmtToolDuration, friendlyTool, groupActivity, lastMatch, latestRecovery, lessonTitle, projectName, recoverableRequest, statusTone, toolCategory, type RecoverableRequest, type SlashCommand } from '../conversationUX';
 import type { MemoryView } from '../memory';
 import { emptyQueue, type MessageQueue as Queue } from '../messageQueue';
 import ProviderWait from './ProviderWait';
 import { progressMessage, type ProviderProgress } from '../providerProgress';
 import { mergeUsage, parseRateLimits, type RateLimits, type UsageSnapshot } from '../usage';
-import { DiffLines } from './diffViewer';
+import { DiffLines, getDiffStats } from './diffViewer';
 import { ClientMeasurement, type HostMeasurement } from '../turnMeasurement';
 import { attachment, chatSnapshot, type AccessCheck, type Diagnostics } from '../context';
 import SessionDashboard from './SessionDashboard';
@@ -527,42 +527,193 @@ function ReasoningBlock({ block }: { block: Extract<Block, { kind: "reasoning" }
   );
 }
 
-function ToolBlock({ block }: { block: Extract<Block, { kind: "tool" }> }) {
+const SWARM_TOOL_NAMES = new Set([
+  "run_swarm",
+  "delegate_task",
+  "swarm_board",
+  "list_swarm_providers",
+  "swarm_run",
+  "swarm_delegate_task",
+  "swarm_list_providers",
+]);
+
+function extractToolFilePath(block: Extract<Block, { kind: "tool" }>): string | undefined {
+  const fromInput = block.input?.file_path ?? block.input?.notebook_path ?? block.input?.path ?? block.input?.Path;
+  if (typeof fromInput === "string" && fromInput.trim()) return fromInput.trim();
+  if (STRUCTURED_FILE_TOOLS.has(block.name) && block.detail) {
+    const d = block.detail.trim();
+    if (d && !/[\r\n]/.test(d) && !/^(git|npm|cargo|rokit|lune)\s+/i.test(d) && (d.includes("/") || d.includes("\\") || /\.[a-z0-9]{1,8}$/i.test(d))) {
+      return d;
+    }
+  }
+  return undefined;
+}
+
+function normalizeWorkspaceFile(rawPath: string, workspaceRoot: string): string {
+  const trimmed = rawPath.trim().replace(/^file:\/\/\//i, "").split("#")[0];
+  if (!workspaceRoot) return trimmed;
+  const cleanRoot = workspaceRoot.replace(/[\\/]+$/, "").toLowerCase();
+  const cleanNorm = trimmed.replace(/\//g, "\\").toLowerCase();
+  if (cleanNorm.startsWith(`${cleanRoot}\\`) || cleanNorm.startsWith(`${cleanRoot}/`)) {
+    return trimmed.slice(workspaceRoot.replace(/[\\/]+$/, "").length + 1).replace(/\\/g, "/");
+  }
+  return trimmed.replace(/\\/g, "/");
+}
+
+function parseJsonSafe(raw: string): Record<string, unknown> | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    const lastBrace = trimmed.lastIndexOf("\n{");
+    if (lastBrace !== -1) {
+      try {
+        const parsed = JSON.parse(trimmed.slice(lastBrace + 1));
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
+      } catch {}
+    }
+  }
+  return null;
+}
+
+interface ParsedSwarmCard {
+  name: string;
+  provider: string;
+  model?: string;
+  status: string;
+  elapsedSec?: number;
+  summary: string;
+}
+
+function extractSwarmCards(toolName: string, body: string): ParsedSwarmCard[] {
+  if (!SWARM_TOOL_NAMES.has(toolName) || !body.trim()) return [];
+  const obj = parseJsonSafe(body);
+  if (!obj) return [];
+  const rawList = Array.isArray(obj.workers)
+    ? obj.workers
+    : Array.isArray(obj.posts)
+      ? obj.posts
+      : null;
+  if (rawList) {
+    return rawList
+      .filter((x): x is Record<string, unknown> => Boolean(x && typeof x === "object"))
+      .slice(0, 8)
+      .map((w, idx) => ({
+        name: String(w.name || w.author || `Worker ${idx + 1}`),
+        provider: String(w.provider || "worker"),
+        model: typeof w.model === "string" ? w.model : undefined,
+        status: String(w.status || (w.ok === false ? "failed" : "completed")),
+        elapsedSec: typeof w.elapsed_sec === "number" ? w.elapsed_sec : undefined,
+        summary: String(w.response || w.content || w.error || w.preview || "").trim().slice(0, 320),
+      }));
+  }
+  if (toolName.includes("delegate") && (typeof obj.provider === "string" || typeof obj.response === "string")) {
+    return [
+      {
+        name: String(obj.worker || obj.bot || "Delegate"),
+        provider: String(obj.provider || "worker"),
+        model: typeof obj.model === "string" ? obj.model : undefined,
+        status: String(obj.status || (obj.ok === false ? "failed" : "completed")),
+        elapsedSec: typeof obj.elapsed_sec === "number" ? obj.elapsed_sec : undefined,
+        summary: String(obj.response || obj.output || obj.error || "").trim().slice(0, 320),
+      },
+    ];
+  }
+  return [];
+}
+
+function SwarmResultView({ cards }: { cards: ParsedSwarmCard[] }) {
+  if (!cards.length) return null;
+  return (
+    <div className="swarm-worker-cards">
+      {cards.map((card, idx) => {
+        const bad = /fail|err|timeout|block/i.test(card.status);
+        const busy = /run|work|pend/i.test(card.status);
+        return (
+          <div key={`${card.name}-${idx}`} className={`swarm-worker-card${bad ? " bad" : busy ? " busy" : " ok"}`}>
+            <div className="swarm-worker-head">
+              <span className={`tool-dot ${bad ? "bad" : busy ? "busy" : "ok"}`} aria-hidden="true" />
+              <strong>{card.name}</strong>
+              <span className="swarm-worker-prov">{card.provider}{card.model ? ` · ${card.model}` : ""}</span>
+              {card.elapsedSec != null && <span className="swarm-worker-time">{card.elapsedSec.toFixed(1)}s</span>}
+            </div>
+            {card.summary && <p className="swarm-worker-summary">{card.summary}</p>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ToolBlock({ block, onInspectFile }: { block: Extract<Block, { kind: "tool" }>; onInspectFile?: (path: string) => void }) {
   const { settings } = usePreferences();
   const [override, setOverride] = useState<boolean | null>(null);
   const open = override ?? settings.toolOutput === "expanded";
   const tone = statusTone(block.status);
+  const category = toolCategory(block.name);
   const body = [block.output, block.result].filter((s) => s && s.length > 0).join("\n");
   const { head, rest } = preview(body || (block.status === "running" ? "…" : ""));
   const detail = block.detail || extractToolSnippet(block.name, block.output, block.result);
+  const filePath = useMemo(() => extractToolFilePath(block), [block]);
   const diff = useMemo(() => (block.input ? editDiff(block.name, block.input) : null), [block.name, block.input]);
+  const diffStats = useMemo(() => (diff ? getDiffStats(diff) : null), [diff]);
+  const swarmCards = useMemo(() => extractSwarmCards(block.name, body), [block.name, body]);
   const showDiff = Boolean(diff && (open || settings.toolOutput !== "collapsed"));
-  const showBody = Boolean(body && (open || (!diff && settings.toolOutput !== "collapsed") || tone === "bad"));
+  const showBody = Boolean(body && (open || (!diff && !swarmCards.length && settings.toolOutput !== "collapsed") || tone === "bad"));
   return (
-    <div className={`tool-card ${tone}`}>
-      <button type="button" className="tool-head" onClick={() => setOverride(!open)} aria-expanded={open}>
-        <span className={`tool-dot ${tone}`} aria-hidden="true" />
-        <span className="tool-name" title={block.name}>
-          {friendlyTool(block.name)}
-        </span>
-        {block.parent && <span className="tool-subagent" title="Run by a subagent">subagent</span>}
-        {detail && (
-          <code className="tool-target-pill" title={detail}>
-            {detail}
-          </code>
-        )}
-        {block.durationMs != null && (
-          <span className="tool-duration" title={`Execution duration: ${fmtToolDuration(block.durationMs)}`}>
-            {fmtToolDuration(block.durationMs)}
+    <div className={`tool-card ${tone} cat-${category}`}>
+      <div className="tool-head-row">
+        <button type="button" className="tool-head" onClick={() => setOverride(!open)} aria-expanded={open}>
+          <span className={`tool-dot ${tone}`} aria-hidden="true" />
+          <span className="tool-name" title={block.name}>
+            {friendlyTool(block.name)}
           </span>
+          {block.parent && <span className="tool-subagent" title="Run by a subagent">subagent</span>}
+          {detail && (
+            <code className="tool-target-pill" title={detail}>
+              {detail}
+            </code>
+          )}
+          {diffStats && (diffStats.additions > 0 || diffStats.deletions > 0) && (
+            <span className="tool-diff-stats" title={`+${diffStats.additions} additions, -${diffStats.deletions} deletions`}>
+              {diffStats.additions > 0 && <em className="add">+{diffStats.additions}</em>}
+              {diffStats.deletions > 0 && <em className="del">-{diffStats.deletions}</em>}
+            </span>
+          )}
+          {block.durationMs != null && (
+            <span className="tool-duration" title={`Execution duration: ${fmtToolDuration(block.durationMs)}`}>
+              {fmtToolDuration(block.durationMs)}
+            </span>
+          )}
+          <span className="tool-status">{block.status}</span>
+          <span className="tool-caret" aria-hidden="true">
+            {open ? "▾" : "▸"}
+          </span>
+        </button>
+        {filePath && onInspectFile && (
+          <button
+            type="button"
+            className="tool-open-diff-btn"
+            title={`Inspect ${filePath} in Split Studio`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onInspectFile(filePath);
+            }}
+          >
+            <Icon name="diff" size={11} />
+            <span>Diff</span>
+          </button>
         )}
-        <span className="tool-status">{block.status}</span>
-        <span className="tool-caret" aria-hidden="true">
-          {open ? "▾" : "▸"}
-        </span>
-      </button>
+      </div>
       {block.policy && !isPlainAllow(block.policy) && <div className="tool-policy">policy: {block.policy}</div>}
       {block.reason && <div className="tool-reason">{block.reason}</div>}
+      {swarmCards.length > 0 && <SwarmResultView cards={swarmCards} />}
       {showDiff && diff && <div className="tool-diff"><DiffLines text={diff} /></div>}
       {showBody ? (
         <div className="tool-output-wrap">
@@ -615,6 +766,9 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
   const [draft, setDraft] = useState("");
   const workspaceDraftRevision = useRef(0);
   const [effective, setEffective] = useState("");
+  const effectiveRef = useRef(effective);
+  effectiveRef.current = effective;
+  const [editingUserBlock, setEditingUserBlock] = useState<{ id: number; text: string } | null>(null);
   // Bump to retry session creation with the same workspace (e.g. the
   // directory was fixed externally after a failed Apply).
   const [retry, setRetry] = useState(0);
@@ -778,14 +932,45 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
       setDashboardTabReq(r => ({ tab: detail.tab, seq: (r?.seq ?? 0) + 1 }));
     };
 
+    const onInspectFile = (e: Event) => {
+      if (!activeRef.current) return;
+      const rawPath = (e as CustomEvent<{ path?: string }>).detail?.path;
+      if (!rawPath) return;
+      const normalized = normalizeWorkspaceFile(rawPath, effectiveRef.current);
+      setSelectedDiffFile(normalized);
+      setChatMode((prev) => {
+        if (prev === "stream") {
+          try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
+          return "split";
+        }
+        return prev;
+      });
+      setDashboardTabReq(r => ({ tab: "diff", seq: (r?.seq ?? 0) + 1 }));
+    };
+
     window.addEventListener("velum:insert-draft", onInsertDraft);
     window.addEventListener("velum:toggle-dashboard", onToggleDashboard);
     window.addEventListener("velum:open-dashboard-tab", onOpenDashboardTab);
+    window.addEventListener("velum:inspect-file", onInspectFile);
     return () => {
       window.removeEventListener("velum:insert-draft", onInsertDraft);
       window.removeEventListener("velum:toggle-dashboard", onToggleDashboard);
       window.removeEventListener("velum:open-dashboard-tab", onOpenDashboardTab);
+      window.removeEventListener("velum:inspect-file", onInspectFile);
     };
+  }, []);
+
+  const inspectFile = useCallback((rawPath: string) => {
+    const normalized = normalizeWorkspaceFile(rawPath, effectiveRef.current);
+    setSelectedDiffFile(normalized);
+    setChatMode((prev) => {
+      if (prev === "stream") {
+        try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
+        return "split";
+      }
+      return prev;
+    });
+    setDashboardTabReq(r => ({ tab: "diff", seq: (r?.seq ?? 0) + 1 }));
   }, []);
 
   const workspaceEditorId = useId();
@@ -1738,6 +1923,38 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
             {blocks.length === 0 && interactions.requests.length === 0 && (
               <div className="chat-empty">
                 <div className="welcome-mark">{bot ? <BotAvatar bot={bot} size={64} status={orbStatus} /> : <VelumMark size={64} status={orbStatus} />}</div>
+                <div className="chat-empty-status">
+                  <span className="chat-empty-chip">
+                    <Icon name="chat" size={12} />
+                    <span>{providerNames[provider]} · {options.model || "Default model"}</span>
+                  </span>
+                  {effective && (
+                    <span className="chat-empty-chip" title={effective}>
+                      <Icon name="folder" size={12} />
+                      <span>{projectName(effective)}</span>
+                    </span>
+                  )}
+                  {gitChangedCount > 0 && (
+                    <button
+                      type="button"
+                      className="chat-empty-chip clickable"
+                      onClick={() => {
+                        setChatMode("split");
+                        setDashboardTabReq(r => ({ tab: "diff", seq: (r?.seq ?? 0) + 1 }));
+                        try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
+                      }}
+                    >
+                      <Icon name="diff" size={12} />
+                      <span>{gitChangedCount} uncommitted</span>
+                    </button>
+                  )}
+                  {swarmEnabled && (
+                    <span className="chat-empty-chip accent">
+                      <Icon name="layers" size={12} />
+                      <span>Swarm · {swarmTargets.length} targets</span>
+                    </span>
+                  )}
+                </div>
                 <span className="welcome-eyebrow">From an idea to something real</span>
                 <h2>{bot ? `${bot.name}, ready to help.` : 'What are we building?'}</h2>
                 <p>Describe what you want to make. Or choose a starting point and make the prompt your own.</p>
@@ -1757,6 +1974,34 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                     </button>
                   ))}
                 </div>
+                {!bot && (
+                  <div className="chat-quick-workflows">
+                    <span className="chat-quick-label">Quick start:</span>
+                    {[
+                      { label: "/review", prompt: "/review Inspect recent uncommitted changes for bugs, edge cases, and regressions." },
+                      { label: "/test", prompt: "/test Run the project test suite and fix any failures." },
+                      { label: "/swarm", prompt: "/swarm Split this task across parallel worker models via run_swarm and synthesize the results: " },
+                      { label: "/bug", prompt: "/bug Diagnose and fix the root cause of this issue: " },
+                    ].map((wf) => (
+                      <button
+                        key={wf.label}
+                        type="button"
+                        className="chat-workflow-chip"
+                        disabled={!ready || running || applying}
+                        onClick={() => {
+                          const next = inputRef.current ? `${inputRef.current}\n\n${wf.prompt}` : wf.prompt;
+                          if (next.length > 64000) return;
+                          inputRef.current = next;
+                          setInput(next);
+                          setHistIdx(null);
+                          composerRef.current?.focus();
+                        }}
+                      >
+                        {wf.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             {groupActivity(blocks, settings.groupActivity, GROUPED_KINDS).map((row) => {
@@ -1772,6 +2017,62 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                     ? `${friendlyTool(current.name)}: ${currentDetail}`
                     : `${friendlyTool(current.name)} in progress`
                   : '';
+
+                const openThought = lastMatch(
+                  row.items.filter((item): item is Extract<Block, { kind: 'reasoning' }> => item.kind === 'reasoning'),
+                  (r) => r.open && Boolean(r.text.trim())
+                );
+                const thoughtPreview = openThought
+                  ? (openThought.text.trim().split('\n').filter(Boolean).pop() ?? '').slice(0, 88)
+                  : undefined;
+
+                const fileMap = new Map<string, ActivityFileChip>();
+                const catCounts = new Map<string, number>();
+                let swarmWorkers = 0;
+                let swarmActive = 0;
+
+                for (const t of tools) {
+                  const cat = toolCategory(t.name);
+                  catCounts.set(cat, (catCounts.get(cat) ?? 0) + 1);
+
+                  const p = extractToolFilePath(t);
+                  if (p) {
+                    const mutated = MUTATING_FILE_TOOLS.has(t.name);
+                    const d = t.input ? editDiff(t.name, t.input) : null;
+                    const ds = d ? getDiffStats(d) : null;
+                    const prev = fileMap.get(p);
+                    fileMap.set(p, {
+                      path: p,
+                      mutated: Boolean(prev?.mutated || mutated),
+                      additions: (prev?.additions ?? 0) + (ds?.additions ?? 0),
+                      deletions: (prev?.deletions ?? 0) + (ds?.deletions ?? 0),
+                    });
+                  }
+
+                  if (SWARM_TOOL_NAMES.has(t.name)) {
+                    const cards = extractSwarmCards(t.name, [t.output, t.result].filter(Boolean).join('\n'));
+                    swarmWorkers += Math.max(cards.length, t.name.includes('run_swarm') ? 2 : 1);
+                    if (statusTone(t.status) === 'busy') swarmActive++;
+                  }
+                }
+
+                const touchedFiles = Array.from(fileMap.values())
+                  .sort((a, b) => Number(b.mutated) - Number(a.mutated))
+                  .slice(0, 4);
+
+                const catLabels: Record<string, string> = {
+                  file: 'Files',
+                  shell: 'Shell',
+                  search: 'Search',
+                  git: 'Git',
+                  mcp: 'MCP',
+                };
+                const categoryBadges: ActivityCategoryBadge[] = Array.from(catCounts.entries()).map(([key, count]) => ({
+                  key,
+                  label: catLabels[key] ?? key,
+                  count,
+                }));
+
                 return (
                   <AgentActivity
                     key={`activity-${row.id}`}
@@ -1780,13 +2081,18 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                     failed={tools.some(tool=>['failed','blocked','rejected'].includes(tool.status))}
                     stopped={tools.some(tool=>tool.status==='cancelled')}
                     busy={!!current}
+                    touchedFiles={touchedFiles}
+                    categoryBadges={categoryBadges}
+                    thoughtPreview={thoughtPreview}
+                    swarmSummary={swarmWorkers > 0 ? { workers: swarmWorkers, active: swarmActive } : undefined}
+                    onInspectFile={inspectFile}
                     onOpenDashboard={() => {
                       setChatMode("split");
                       setDashboardTabReq(r => ({ tab: "activity", seq: (r?.seq ?? 0) + 1 }));
                       try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
                     }}
                   >
-                    {row.items.map((item) => item.kind === 'tool' ? <ToolBlock key={item.id} block={item} />
+                    {row.items.map((item) => item.kind === 'tool' ? <ToolBlock key={item.id} block={item} onInspectFile={inspectFile} />
                       : item.kind === 'reasoning' ? <ReasoningBlock key={item.id} block={item} /> : null)}
                   </AgentActivity>
                 );
@@ -1798,13 +2104,34 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                   const hasAttachment = Boolean(b.attachments?.length || parsed.imagePath);
                   const imgSrc = b.attachments?.[0]?.dataUrl || parsed.imagePath;
                   const imgName = b.attachments?.[0]?.name || parsed.relativePath?.split(/[\\/]/).pop() || "Attached photo";
+                  const isEditingUser = editingUserBlock?.id === b.id;
                   return (
                     <div key={b.id} className="msg user">
                       <div className="message-header">
                         <span className="message-avatar user-avatar">Y</span>
                         <div className="message-author"><strong>You</strong>{b.notSent && <span className="message-unsent">Not sent</span>}</div>
-                        <CopyButton text={b.text} />
-                        <button type="button" className="msg-action-btn" title="Remember this message" aria-label="Remember this message" onClick={()=>onRemember(b.text)}><Icon name="memory" size={15}/></button>
+                        <button
+                          type="button"
+                          className="msg-utility-btn"
+                          title="Edit and resend this prompt"
+                          aria-label="Edit and resend message"
+                          disabled={!ready || running}
+                          onClick={() => setEditingUserBlock(isEditingUser ? null : { id: b.id, text: parsed.cleanText })}
+                        >
+                          <Icon name="edit" size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className="msg-utility-btn"
+                          title="Re-run this prompt"
+                          aria-label="Re-run this prompt"
+                          disabled={!ready || running || !parsed.cleanText.trim()}
+                          onClick={() => { void sendText(parsed.cleanText, true); }}
+                        >
+                          <Icon name="reset" size={14} />
+                        </button>
+                        <CopyButton text={parsed.cleanText} />
+                        <button type="button" className="msg-action-btn" title="Remember this message" aria-label="Remember this message" onClick={()=>onRemember(parsed.cleanText)}><Icon name="memory" size={15}/></button>
                       </div>
                       {hasAttachment && imgSrc && (
                         <div className="msg-attachment-preview">
@@ -1835,18 +2162,60 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                           <span>Swarm · {parsed.swarmTargets}</span>
                         </div>
                       )}
-                      <pre>{parsed.cleanText}</pre>
+                      {isEditingUser && editingUserBlock ? (
+                        <div className="user-inline-editor">
+                          <textarea
+                            aria-label="Edit prompt"
+                            value={editingUserBlock.text}
+                            onChange={(e) => setEditingUserBlock({ id: b.id, text: e.target.value })}
+                            rows={Math.min(8, Math.max(2, editingUserBlock.text.split("\n").length))}
+                          />
+                          <div className="user-inline-actions">
+                            <button type="button" className="workspace-btn secondary" onClick={() => setEditingUserBlock(null)}>Cancel</button>
+                            <button
+                              type="button"
+                              className="workspace-btn"
+                              disabled={!editingUserBlock.text.trim() || !ready || running}
+                              onClick={() => {
+                                const updated = editingUserBlock.text.trim();
+                                setEditingUserBlock(null);
+                                if (updated) void sendText(updated, true);
+                              }}
+                            >
+                              Send updated prompt
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <pre>{parsed.cleanText}</pre>
+                      )}
                     </div>
                   );
                 }
                 case "assistant": {
                   const touched = turnTouchedFiles(blocks, b.id);
                   const isLatestAssistant = lastAssistant?.id === b.id;
+                  const blockIndex = blocks.findIndex((x) => x.id === b.id);
+                  let retryPrompt = "";
+                  for (let idx = blockIndex - 1; idx >= 0; idx--) {
+                    const prev = blocks[idx];
+                    if (prev?.kind === "user") {
+                      retryPrompt = parseAttachedImage(prev.text).cleanText.trim();
+                      break;
+                    }
+                  }
                   return (
                     <div key={b.id} className="msg assistant">
                       <div className="message-header">
                         <span className="message-avatar muse-avatar">{bot ? <BotAvatar bot={bot} size={38} status={b.open && running ? orbStatus : "idle"} /> : <VelumMark size={38} status={b.open && running ? orbStatus : "idle"} />}</span>
-                        <div className="message-author"><strong>{bot?.name||providerNames[provider]}<span className="assistant-badge">{bot?providerNames[provider]:'AI'}</span></strong></div>
+                        <div className="message-author">
+                          <strong>
+                            {bot?.name || providerNames[provider]}
+                            <span className="assistant-badge">{bot ? providerNames[provider] : 'AI'}</span>
+                            <span className="msg-model-chip">{options.model || providerNames[provider]}</span>
+                            {b.open && running && <span className="msg-streaming-pill">Generating…</span>}
+                          </strong>
+                        </div>
                         <CopyButton text={b.text} />
                         <button type="button" className="msg-action-btn" title="Remember this answer" aria-label="Remember this answer" onClick={()=>onRemember(b.text)}><Icon name="memory" size={15}/></button>
                       </div>
@@ -1856,6 +2225,22 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                           <button type="button" onClick={()=>setCorrection({id:b.id,answer:b.text})}>
                             <Icon name="edit" size={14}/>Correct response
                           </button>
+                          {retryPrompt && (
+                            <button
+                              type="button"
+                              className="response-retry-btn"
+                              disabled={!ready || running}
+                              title="Re-run the preceding prompt"
+                              onClick={() => { void sendText(retryPrompt, true); }}
+                            >
+                              <Icon name="reset" size={14}/>Retry
+                            </button>
+                          )}
+                          {touched.length > 0 && (
+                            <button type="button" onClick={() => inspectFile(touched[0])}>
+                              <Icon name="diff" size={14}/>Inspect diff ({touched.length})
+                            </button>
+                          )}
                         </div>
                       )}
                       {!b.open && isLatestAssistant && (
@@ -1873,12 +2258,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                                   type="button"
                                   className="turn-diff-pill"
                                   title={`Inspect diff for ${file} in Mission Dashboard`}
-                                  onClick={() => {
-                                    setSelectedDiffFile(file);
-                                    setChatMode("split");
-                                    setDashboardTabReq(r => ({ tab: "diff", seq: (r?.seq ?? 0) + 1 }));
-                                    try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
-                                  }}
+                                  onClick={() => inspectFile(file)}
                                 >
                                   <Icon name="diff" size={11} />
                                   <span>{file.split(/[\\/]/).pop()}</span>
@@ -1899,6 +2279,53 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                               <span>View {gitChangedCount} changed {gitChangedCount === 1 ? 'file' : 'files'}</span>
                             </button>
                           ) : null}
+                          <div className="turn-followup-row">
+                            <span className="turn-handoff-label">Quick follow-ups:</span>
+                            <button
+                              type="button"
+                              className="turn-followup-chip"
+                              disabled={!ready || running}
+                              onClick={() => {
+                                const next = "Run the relevant tests and checks to verify the changes above, reporting exact results.";
+                                inputRef.current = next;
+                                setInput(next);
+                                composerRef.current?.focus();
+                              }}
+                            >
+                              <Icon name="terminal" size={11} />
+                              <span>Run tests</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="turn-followup-chip"
+                              onClick={() => {
+                                if (touched[0]) {
+                                  inspectFile(touched[0]);
+                                } else {
+                                  setChatMode("split");
+                                  setDashboardTabReq(r => ({ tab: "diff", seq: (r?.seq ?? 0) + 1 }));
+                                  try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
+                                }
+                              }}
+                            >
+                              <Icon name="diff" size={11} />
+                              <span>Review diff</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="turn-followup-chip"
+                              disabled={!ready || running}
+                              onClick={() => {
+                                const next = "Summarize what changed, what was verified, and any remaining risks or next steps.";
+                                inputRef.current = next;
+                                setInput(next);
+                                composerRef.current?.focus();
+                              }}
+                            >
+                              <Icon name="sparkles" size={11} />
+                              <span>Summarize changes</span>
+                            </button>
+                          </div>
                           <div className="turn-handoff-row">
                             <span className="turn-handoff-label">Next step:</span>
                             {getRecommendedHandoff(bot?.name).map((rec) => (
@@ -1938,12 +2365,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                               type="button"
                               className="turn-diff-pill"
                               title={`Inspect diff for ${file} in Mission Dashboard`}
-                              onClick={() => {
-                                setSelectedDiffFile(file);
-                                setChatMode("split");
-                                setDashboardTabReq(r => ({ tab: "diff", seq: (r?.seq ?? 0) + 1 }));
-                                try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
-                              }}
+                              onClick={() => inspectFile(file)}
                             >
                               <Icon name="diff" size={11} />
                               <span>{file.split(/[\\/]/).pop()}</span>
@@ -1965,7 +2387,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                   );
                 }
             case "tool":
-              return <ToolBlock key={b.id} block={b} />;
+              return <ToolBlock key={b.id} block={b} onInspectFile={inspectFile} />;
             case "reasoning":
               return <ReasoningBlock key={b.id} block={b} />;
             case "notice":
@@ -2011,15 +2433,32 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
       }} />
       {showLatest && <div className="latest-wrap"><button type="button" className="latest-btn" onClick={jumpToLatest}><Icon name="down" size={14} />Back to latest</button></div>}
       {todos.length > 0 && (
-        <details className="task-progress"><summary><Icon name="check" size={13}/><span>{doneTodos.length} of {todos.length} steps complete{openTodos.find(t=>t.status==='in_progress') ? ` · ${openTodos.find(t=>t.status==='in_progress')!.text}` : ''}</span><Icon name="down" size={12}/></summary><div className="todos">
-          <span className="todos-title">Tasks</span>
-          {openTodos.map((t, i) => (
-            <span key={`o${i}`} className={`todo ${t.status}`}>
-              {t.status === "in_progress" ? "◐" : "○"} {t.text}
+        <details className="task-progress">
+          <summary>
+            <Icon name="check" size={13} />
+            <span className="task-progress-label">
+              {doneTodos.length} of {todos.length} steps complete
+              {openTodos.find((t) => t.status === "in_progress")
+                ? ` · ${openTodos.find((t) => t.status === "in_progress")!.text}`
+                : ""}
             </span>
-          ))}
-          {doneTodos.length > 0 && <span className="todo done">✓ {doneTodos.length} done</span>}
-        </div></details>
+            <span className="task-progress-bar" aria-hidden="true">
+              <span style={{ width: `${Math.round((doneTodos.length / Math.max(1, todos.length)) * 100)}%` }} />
+            </span>
+            <Icon name="down" size={12} />
+          </summary>
+          <div className="todos">
+            <span className="todos-title">Mission Plan</span>
+            {todos.map((t, i) => (
+              <span key={`t${i}`} className={`todo ${t.status === "completed" ? "done" : t.status}`}>
+                <span className="todo-glyph" aria-hidden="true">
+                  {t.status === "completed" ? "✓" : t.status === "in_progress" ? "◉" : "○"}
+                </span>
+                <span>{t.text}</span>
+              </span>
+            ))}
+          </div>
+        </details>
       )}
       {workspaceError && <div className="notice error" role="alert">{workspaceError}</div>}
       {!yolo && workspaceNotice && <div className="notice" role="status">{workspaceNotice}</div>}

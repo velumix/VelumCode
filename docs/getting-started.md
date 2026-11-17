@@ -1,82 +1,51 @@
 # Getting started
 
-After installing 0.6.9 or newer, Velum checks GitHub during its opening animation,
-downloads and verifies newer releases, then installs and reopens automatically.
-Versions 0.6.6–0.6.7 need **Settings → Updates → Restart to update** once to add
-this behavior. Offline launches open the current version. See [App updates](updates.md).
+Signed Windows releases from GitHub check for updates during Velum Code's opening animation, verify signatures, download new installers automatically, and reopen cleanly while keeping your tabs, drafts, and preferences. Offline launches open the installed version immediately. See [App updates](updates.md).
 
-[Documentation](README.md)
+[Documentation](README.md) · [Multi-provider swarm](swarm.md) · [Bonsai 2 local GPU](bonsai.md)
 
 ## 1. Install and connect a provider
 
-Velum Code is a Windows x64 desktop app. Download a successful build as described
-in the [project README](../README.md#get-velumcode), extract the artifact and run
-the installer. Development artifacts are unsigned. The desktop installer sets
-up the native notification identity; running an arbitrary copied executable is
-not the same installation.
+Download `Velum.Code_<version>_x64-setup.exe` from [**GitHub Releases**](https://github.com/velumix/VelumCode/releases) (or the latest Windows CI artifact in [the project README](../README.md#get-velumcode)) and run the installer. The NSIS installer registers the Windows AppUserModelID required for native toast notifications and tray activation.
 
-Install and sign in to at least one supported CLI: `muse`, `codex` or `agy`.
-Choose it through the app's assistant/provider controls. The CLI's account,
-models, limits and charges apply. Antigravity's dedicated sign-in flow forwards
-your one-time code to its CLI; do not paste sign-in codes into a conversation.
+Install and sign in to at least one supported CLI (or set up **Bonsai 2** locally):
 
-The app checks the selected provider's installed CLI and prefills the model
-catalog cache, then reports `CLI ready` (with version and model count) in the
-assistant controls. A CLI that never answers is reported as not responding;
-its version probe stops and cleans up its process tree after 30 seconds.
-Each provider's result is cached until you choose **Refresh providers and
-models**. These checks are advisory: every prompt still resolves and validates
-the provider and starts its own CLI process, with its own connection cost.
+- **Claude Code (`claude`)**: install `@anthropic-ai/claude-code`, choose **Claude**, and sign in via browser or API key.
+- **Bonsai 2 (`bonsai`)**: run local `Bonsai-2-27B` (`:8080`) and optional `Bonsai-2-4B` fast worker (`:8090`). See [Bonsai guide](bonsai.md).
+- **Codex (`codex`)**: install OpenAI Codex CLI and sign in with ChatGPT or API credentials.
+- **Google Antigravity (`agy`)**: install Antigravity CLI, choose **Antigravity**, and complete the dedicated sign-in screen.
+- **Muse (`muse`)**: uses your installed Muse CLI session.
 
-Read the [legal status](../LEGAL.md) and [privacy notice draft](../PRIVACY.md),
-especially the sections on provider processing and local storage.
+Velum checks CLI health and prefills model/reasoning catalogs automatically, showing `CLI ready` (version and model count) in **Assistant settings**. Non-responsive probes are cleanly cleaned up after 30 seconds. Review [legal status](../LEGAL.md) and the [privacy notice draft](../PRIVACY.md) before sending sensitive code to cloud CLIs.
 
 ## 2. Choose a project
 
-Use the project folder picker and select the folder the agent should work in.
-Check the access result before giving a file task. Keep a backup or a clean Git
-checkpoint for work you care about. Standard permissions vary by provider;
-YOLO can bypass approvals and sandbox protections.
+Click **Project folder** below the composer and choose the workspace folder the agent should work in. Keep clean Git commits before running destructive commands. Standard vs **YOLO** execution permissions are toggled in the composer action strip.
 
-Start with one concrete request: what you want to make, the intended audience,
-and any constraints. The starters are editable drafts. Sending a prompt gives
-the selected CLI the prompt and available context; project files read by its
-tools can also be sent to that provider.
+Use the composer pickers anytime to tailor each turn:
+- **Skills**: attach up to 8 `SKILL.md` instruction packs (`Skills`)
+- **Tools**: configure host tool scopes (`file_delete`, `vault_search`, `browser`, desktop capture/control, `swarm`)
+- **Swarm**: enable multi-provider `/swarm` delegation across local and cloud CLIs
 
-## 3. Work with the conversation
+## 3. Work in the studio conversation
 
-The assistant control exposes provider, model and reasoning choices. Settings
-(`Ctrl+,`) changes themes, glass, layout, text and workflow preferences. The
-default send shortcut is Enter; Shift+Enter inserts a line break.
+Type a prompt or type `/` for slash commands (`/review`, `/test`, `/swarm`, `/delegate`, `/refactor`, `/bug`, `/clear`), or switch between **Stream**, **Split**, and **Dashboard** views in the chat header to inspect diffs and tool telemetry alongside the feed.
 
 | Action | What happens |
 | --- | --- |
-| Send while the agent is working | Your message joins the queue and can run after the current turn finishes |
-| Edit/remove/pause the queue | Changes pending work before it runs |
-| Stop a turn | Interrupts active work and preserves pending messages for review |
-| Recover after a failure or restart | Interrupted work is stopped and the queue needs review/resume |
-| Correct a response | Prepares a follow-up; optionally save a reviewed lesson for future project context |
-| Switch Agent/Terminal | Keeps separate conversations; the terminal can handle interactive CLI prompts |
+| Send while the agent is working | Your prompt enters the ordered native queue without interrupting the active turn |
+| Click **Edit & Resend** on any prompt | Edit a previous prompt inline and resend it directly from history |
+| Click a file chip in markdown or activity | Opens Split Studio right on that file's Git diff |
+| Click **Skills / Tools / Swarm** | Adjusts per-turn instructions, host tool permissions, or delegation roster |
+| Toggle **Agent / Terminal** | Switches between the structured studio feed and a full interactive Windows ConPTY shell |
 
-Review changed files and output. A saved lesson can help future turns but cannot
-guarantee that an agent will follow it. See the [conversation guide](conversation-experience.md)
-and [memory guide](memory.md) for the full behavior.
+## 4. Keep work running in the tray
 
-## 4. Understand the tray
+Closing the window or pressing `Alt+F4` hides Velum Code to the Windows system tray while background agent turns, scheduled bot jobs, and phone remote access stay alive. Choose **Quit Velum Code** from the tray menu or `Ctrl+K` to exit completely.
 
-Closing the window or pressing Alt+F4 hides Velum to the tray. Running work and
-enabled schedules can continue. Choose **Quit Velum Code** from the tray or
-command palette to exit and stop background processes. Open Agent tabs and
-bounded recent history recover after reopening; terminal processes and
-scrollback are not restored.
+## 5. Expand when you need more
 
-## 5. Add optional tools when you need them
-
-- [Pair a phone](remote-access.md), choosing view-only or control access.
-- [Create a bot](bots.md) and review its instructions and scheduling mode.
-- [Plan tasks](kanban.md) before assigning automated work.
-- [Install a plugin](plugins.md) after checking its source and permissions.
-
-Keep the first workflow small. You can add these features as a task calls for
-them. For errors, see [troubleshooting](support.md); for removal or privacy
-choices, see [data controls](data-controls.md).
+- [Orchestrate a multi-provider `/swarm`](swarm.md) across fast local workers and cloud specialists.
+- [Pair your Android phone](remote-access.md) over Tailscale HTTPS or USB.
+- [Build a custom Bot team](bots.md) with scheduled [Kanban](kanban.md) assignments and private Markdown memory.
+- [Install Plugins](plugins.md) and [Skills](skills.md), or tune themes and Crystal Glass in `Ctrl+,` ([Appearance](appearance.md)).

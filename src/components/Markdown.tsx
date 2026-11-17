@@ -5,16 +5,59 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { isTauri } from "@tauri-apps/api/core";
 import { copyText } from "./clip";
 import { DiffLines } from "./diffViewer";
+import { highlightCode } from "../syntaxHighlight";
+
+const FILE_EXT_RE =
+  /\.(?:tsx?|jsx?|mjs|cjs|rs|py|luau|lua|css|scss|html?|jsonc?|toml|ya?ml|md|mdx|ps1|sh|zsh|cmd|bat|sql|txt|env|gitignore|lock)(?::\d+(?:-\d+)?)?$/i;
+
+const SHELL_LANGS = new Set(["bash", "sh", "zsh", "shell", "powershell", "ps1", "cmd", "bat", "pwsh"]);
 
 function isWebUrl(href: string): boolean {
   return /^https?:\/\//i.test(href);
 }
 
+function dispatchInspectFile(filePath: string) {
+  window.dispatchEvent(new CustomEvent("velum:inspect-file", { detail: { path: filePath } }));
+}
+
+function extractWorkspaceFilePath(raw: string): { display: string; filePath: string } | null {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > 260 || /[\s<>"'`]/.test(trimmed)) return null;
+
+  if (/^file:\/\/\//i.test(trimmed)) {
+    const noHash = trimmed.split("#")[0];
+    const fsPath = decodeURIComponent(noHash.replace(/^file:\/\/\//i, ""));
+    if (!fsPath) return null;
+    return { display: fsPath, filePath: fsPath };
+  }
+
+  if (/^[a-z]+:\/\//i.test(trimmed)) return null;
+
+  const cleanNoHash = trimmed.split("#")[0];
+  if (FILE_EXT_RE.test(cleanNoHash) || /^[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)+\.[a-zA-Z0-9]{1,8}(?::\d+)?$/.test(cleanNoHash)) {
+    const fileOnly = cleanNoHash.replace(/:\d+(?:-\d+)?$/, "");
+    return { display: trimmed, filePath: fileOnly };
+  }
+  return null;
+}
+
 function MdLink({ href, children }: { href?: string; children?: ReactNode }) {
   if (!href) return <span>{children}</span>;
   if (!isWebUrl(href)) {
-    // Relative paths, anchors, and non-web schemes stay inert so a model
-    // cannot trigger navigation outside the browser.
+    const fileRef = extractWorkspaceFilePath(href);
+    if (fileRef) {
+      return (
+        <button
+          type="button"
+          className="md-file-chip"
+          title={`Inspect ${fileRef.filePath} in Split Studio`}
+          onClick={() => dispatchInspectFile(fileRef.filePath)}
+        >
+          <span className="md-file-chip-icon" aria-hidden="true">↗</span>
+          <span>{children}</span>
+        </button>
+      );
+    }
     return <code className="md-inline md-link-path">{children}</code>;
   }
   return (
@@ -37,7 +80,27 @@ function MdLink({ href, children }: { href?: string; children?: ReactNode }) {
 function MdCode({ className, children }: { className?: string; children?: ReactNode }) {
   const isDiff = className?.includes("language-diff") || className?.includes("language-patch");
   if (isDiff && typeof children === "string") {
-    return <code className="md-inline md-diff-block"><DiffLines text={children} /></code>;
+    return (
+      <code className="md-inline md-diff-block">
+        <DiffLines text={children} />
+      </code>
+    );
+  }
+  // Inline code paths (never fenced blocks, which contain newlines or language classes) become clickable file chips.
+  if (!className && typeof children === "string" && !children.includes("\n")) {
+    const fileRef = extractWorkspaceFilePath(children);
+    if (fileRef) {
+      return (
+        <button
+          type="button"
+          className="md-file-chip"
+          title={`Inspect ${fileRef.filePath} in Split Studio`}
+          onClick={() => dispatchInspectFile(fileRef.filePath)}
+        >
+          <code>{children}</code>
+        </button>
+      );
+    }
   }
   return <code className="md-inline">{children}</code>;
 }
@@ -77,34 +140,72 @@ function parseBlockInfo(children: ReactNode): { lang: string; file?: string; lin
 
 function MdPre({ children }: { children?: ReactNode }) {
   const [copied, setCopied] = useState(false);
+  const [wrap, setWrap] = useState(false);
   const { lang, file, lines } = parseBlockInfo(children);
+  const rawCode = textOf(children).replace(/\n$/, "");
+  const isDiff = lang.toLowerCase() === "diff" || lang.toLowerCase() === "patch";
+  const isShell = SHELL_LANGS.has(lang.toLowerCase()) && rawCode.trim().length > 0 && rawCode.length <= 2000;
+
   const copy = useCallback(() => {
-    // Fenced blocks carry one trailing newline; drop it from the copy.
-    const text = textOf(children).replace(/\n$/, "");
-    void copyText(text).then((ok) => {
+    void copyText(rawCode).then((ok) => {
       if (!ok) return;
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1200);
     });
-  }, [children]);
+  }, [rawCode]);
 
   const insert = useCallback(() => {
-    const text = textOf(children).replace(/\n$/, "");
-    window.dispatchEvent(new CustomEvent("velum:insert-draft", { detail: text }));
-  }, [children]);
+    window.dispatchEvent(new CustomEvent("velum:insert-draft", { detail: rawCode }));
+  }, [rawCode]);
+
+  const insertRun = useCallback(() => {
+    window.dispatchEvent(
+      new CustomEvent("velum:insert-draft", {
+        detail: `Run this command and report the output:\n\`\`\`${lang}\n${rawCode}\n\`\`\``,
+      })
+    );
+  }, [lang, rawCode]);
 
   return (
     <div className="md-code">
       <div className="md-code-head">
         <div className="md-code-tag">
-          {file ? <span className="md-code-file">{file}</span> : null}
+          {file ? (
+            <button
+              type="button"
+              className="md-code-file md-code-file-btn"
+              title={`Inspect ${file} in Split Studio`}
+              onClick={() => dispatchInspectFile(file)}
+            >
+              {file}
+            </button>
+          ) : null}
           <span className="md-code-lang">{lang}</span>
           {lines > 1 ? <span className="md-code-lines">{lines} lines</span> : null}
         </div>
         <div className="md-code-actions">
-          <button type="button" className="md-copy" aria-label="Copy code" onClick={copy}>
-            {copied ? "Copied" : "Copy"}
-          </button>
+          {isShell && (
+            <button
+              type="button"
+              className="md-insert-btn md-run-btn"
+              aria-label="Run snippet in composer"
+              title="Queue this shell command in the composer"
+              onClick={insertRun}
+            >
+              Run
+            </button>
+          )}
+          {lines > 1 && (
+            <button
+              type="button"
+              className={`md-wrap-btn${wrap ? " active" : ""}`}
+              aria-pressed={wrap}
+              title={wrap ? "Disable line wrapping" : "Wrap long lines"}
+              onClick={() => setWrap((w) => !w)}
+            >
+              Wrap
+            </button>
+          )}
           <button
             type="button"
             className="md-insert-btn"
@@ -114,9 +215,22 @@ function MdPre({ children }: { children?: ReactNode }) {
           >
             Insert
           </button>
+          <button type="button" className="md-copy" aria-label="Copy code" onClick={copy}>
+            {copied ? "Copied" : "Copy"}
+          </button>
         </div>
       </div>
-      <pre>{children}</pre>
+      {isDiff ? (
+        <pre className={wrap ? "wrapped" : undefined}>
+          <code className="md-inline md-diff-block">
+            <DiffLines text={rawCode} />
+          </code>
+        </pre>
+      ) : (
+        <pre className={wrap ? "wrapped" : undefined}>
+          <code>{highlightCode(rawCode, lang)}</code>
+        </pre>
+      )}
     </div>
   );
 }
@@ -129,7 +243,28 @@ function MdTable({ children }: { children?: ReactNode }) {
   );
 }
 
-const components: Components = { a: MdLink, pre: MdPre, code: MdCode, table: MdTable };
+function MdBlockquote({ children }: { children?: ReactNode }) {
+  const plain = textOf(children).trimStart();
+  const match = plain.match(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*/i);
+  if (match) {
+    const kind = match[1].toLowerCase();
+    return (
+      <blockquote className={`md-callout callout-${kind}`}>
+        <div className="md-callout-badge">{match[1].toUpperCase()}</div>
+        {children}
+      </blockquote>
+    );
+  }
+  return <blockquote>{children}</blockquote>;
+}
+
+const components: Components = {
+  a: MdLink,
+  pre: MdPre,
+  code: MdCode,
+  table: MdTable,
+  blockquote: MdBlockquote,
+};
 
 function Markdown({ text }: { text: string }) {
   return (

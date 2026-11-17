@@ -327,3 +327,82 @@ test("user can attach photo in chat, preview it, remove it, send it, and inspect
   const axe = await new AxeBuilder({ page }).include(".composer").include(".msg.user").analyze();
   expect(axe.violations).toEqual([]);
 });
+
+test("interactive chat renders syntax highlighting, file chips, collapsed activity pills, swarm cards, and inline prompt edit", async ({ page }) => {
+  await boot(page);
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+
+  await page.locator(".composer textarea").fill("Update App and run swarm");
+  await page.locator(".composer textarea").press("Enter");
+
+  await page.evaluate(() => {
+    const q = (window as any).qa;
+    q.agent({
+      kind: "tool_start",
+      task_id: "t-edit",
+      name: "edit_file",
+      detail: "src/App.tsx",
+      input: { path: "src/App.tsx", old_text: "const a = 1;", new_text: "const a = 2;\nconst b = 3;" },
+    });
+    q.agent({ kind: "tool_end", task_id: "t-edit", status: "completed" });
+    q.agent({
+      kind: "tool_start",
+      task_id: "t-swarm",
+      name: "run_swarm",
+      detail: "2 workers",
+    });
+    q.agent({
+      kind: "tool_result",
+      task_id: "t-swarm",
+      text: JSON.stringify({
+        swarm_id: "swarm-1",
+        workers: [
+          { name: "auditor", provider: "bonsai-fast", status: "completed", elapsed_sec: 1.2, response: "No issues found." },
+          { name: "reviewer", provider: "claude", status: "completed", elapsed_sec: 2.1, response: "Approved cleanly." },
+        ],
+      }),
+    });
+    q.agent({ kind: "tool_end", task_id: "t-swarm", status: "completed" });
+    q.agent({
+      kind: "assistant_delta",
+      text: "Updated `src/App.tsx`.\n\n```ts\nconst answer = 42;\n```\n\n> [!TIP] Verified both files.",
+    });
+    q.agent({ kind: "turn_end", status: "completed" });
+  });
+
+  // Collapsed activity shows touched file pill & swarm badge while .tool-card count remains 0
+  const activity = page.getByRole("region", { name: "Agent activity" });
+  await expect(activity.locator(".activity-file-pill")).toContainText("App.tsx");
+  await expect(activity.locator(".activity-swarm-pill")).toContainText("Swarm");
+  await expect(page.locator(".tool-card")).toHaveCount(0);
+
+  // Expand activity and check Swarm Worker cards
+  await activity.locator(".activity-toggle").click();
+  await expect(page.locator(".swarm-worker-card")).toHaveCount(2);
+  await expect(page.locator(".swarm-worker-card").first()).toContainText("bonsai-fast");
+
+  // Syntax highlight token rendered while Copy still copies exact raw code
+  await expect(page.locator(".md-code .tok-kw").first()).toHaveText("const");
+  await page.locator(".md-copy").click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("const answer = 42;");
+
+  // Inline file chip opens Split Studio Diff
+  await page.locator(".msg.assistant .md-file-chip").first().click();
+  await expect(page.locator(".chat-main-area")).toHaveClass(/mode-split/);
+  await expect(page.locator(".session-dashboard")).toBeVisible();
+
+  // Inline prompt edit & resend on user message
+  await page.getByRole("button", { name: "Edit and resend message", exact: true }).click();
+  await page.getByLabel("Edit prompt", { exact: true }).fill("Edited follow-up prompt");
+  await page.getByRole("button", { name: "Send updated prompt", exact: true }).click();
+  await page.evaluate(() => (window as any).qa.agent({ kind: "turn_end", status: "completed", text: "Second reply" }));
+  await expect(page.locator(".msg.user").last()).toContainText("Edited follow-up prompt");
+
+  // Axe WCAG 2.1 AA verification across chat stream + composer
+  const axe = await new AxeBuilder({ page })
+    .include(".chat-scroll")
+    .include(".composer")
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+    .analyze();
+  expect(axe.violations).toEqual([]);
+});

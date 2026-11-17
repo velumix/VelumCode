@@ -2,7 +2,7 @@
 
 [Back to Velum Code](../README.md)
 
-A bot is a named identity you own. Its preferred CLI can change without changing its personality or private memory. Muse, Codex, and Antigravity all receive the same Velum instructions in Agent view. Each CLI keeps its own authentication and conversation session.
+A bot is a named identity you own. Its preferred CLI can change without changing its personality or private memory. **Claude Code**, **Bonsai 2**, **Muse**, **Codex**, and **Antigravity** all receive the same Velum instructions in Agent view (plus optional **Bonsai 2 `<8GB` Automation** profiles for continuous background watchdogs). Each CLI keeps its own authentication and conversation session.
 
 ## Create your team
 
