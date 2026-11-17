@@ -44,31 +44,158 @@ fn extract_antigravity_detail(tool_name: &Value, step: &Value, info: &Value) -> 
     } else {
         return None;
     };
+    let str_key = |keys: &[&str]| -> Option<String> {
+        keys.iter()
+            .find_map(|k| params.get(*k).and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(bounded)
+    };
     match name {
-        "run_command" | "execute_command" | "powershell" | "bash" | "sh" | "cmd" => params
-            .get("CommandLine")
-            .or_else(|| params.get("command"))
-            .or_else(|| params.get("toolSummary"))
+        "run_command" | "execute_command" | "powershell" | "bash" | "sh" | "cmd" => {
+            str_key(&["CommandLine", "command", "toolSummary"])
+        }
+        "read_file"
+        | "write_file"
+        | "edit_file"
+        | "inspect_file"
+        | "delete_file"
+        | "list_dir"
+        | "list_directory"
+        | "workspace_read_file"
+        | "git_diff" => str_key(&["Path", "path", "file_path", "TargetFile"]),
+        "grep_files" | "glob_files" | "workspace_list_search" => {
+            str_key(&["pattern", "query", "q", "path", "Path"])
+        }
+        "search_web" | "web_search" | "workspace_search" | "vault_search" | "search"
+        | "memory_search" => str_key(&["query", "q", "pattern"]),
+        "web_fetch" | "browser_open" => str_key(&["url", "uri"]),
+        "github_api" => str_key(&["endpoint", "repo", "url"]),
+        "get_weather" => str_key(&["location", "city", "query"]),
+        "memory_save" => str_key(&["title", "key", "topic"]),
+        "run_python" => params
+            .get("code")
             .and_then(Value::as_str)
-            .map(|s| bounded(s.trim())),
-        "read_file" | "write_file" | "edit_file" | "inspect_file" | "delete_file" => params
-            .get("Path")
-            .or_else(|| params.get("path"))
-            .and_then(Value::as_str)
-            .map(|s| bounded(s.trim())),
-        "search_web" | "web_search" | "workspace_search" | "vault_search" | "search" => params
-            .get("query")
-            .or_else(|| params.get("q"))
-            .and_then(Value::as_str)
-            .map(|s| bounded(s.trim())),
-        _ => params
-            .get("toolSummary")
-            .or_else(|| params.get("Path"))
-            .or_else(|| params.get("query"))
-            .or_else(|| params.get("CommandLine"))
-            .and_then(Value::as_str)
-            .map(|s| bounded(s.trim())),
+            .and_then(|c| c.lines().map(str::trim).find(|l| !l.is_empty()))
+            .map(bounded),
+        "write_todos" => params
+            .get("items")
+            .and_then(Value::as_array)
+            .map(|items| format!("{} steps", items.len())),
+        "browser_action" | "native_input" => {
+            let action = params
+                .get("action")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            let target = params
+                .get("selector")
+                .or_else(|| params.get("key"))
+                .or_else(|| params.get("window_id"))
+                .or_else(|| params.get("tab_id"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            match (action.is_empty(), target.is_empty()) {
+                (false, false) => Some(bounded(&format!("{action} {target}"))),
+                (false, true) => Some(bounded(action)),
+                (true, false) => Some(bounded(target)),
+                (true, true) => str_key(&["text", "expression"]),
+            }
+        }
+        "browser_snapshot" | "browser_screenshot" | "native_screenshot" => {
+            str_key(&["window_id", "tab_id", "title"])
+        }
+        "delegate_task" => {
+            let prov = params
+                .get("bot")
+                .or_else(|| params.get("provider"))
+                .and_then(Value::as_str)
+                .unwrap_or("worker")
+                .trim();
+            let role = params
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            if role.is_empty() {
+                str_key(&["provider", "bot", "task"])
+            } else {
+                Some(bounded(&format!("{prov} · {role}")))
+            }
+        }
+        "run_swarm" => {
+            let title = params
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or("Parallel swarm")
+                .trim();
+            let count = params
+                .get("workers")
+                .and_then(Value::as_array)
+                .map(|w| w.len())
+                .unwrap_or(0);
+            Some(bounded(&format!("{count} workers · {title}")))
+        }
+        "swarm_board" => {
+            let action = params
+                .get("action")
+                .and_then(Value::as_str)
+                .unwrap_or("read")
+                .trim();
+            let sid = params
+                .get("swarm_id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            if sid.is_empty() {
+                Some(bounded(action))
+            } else {
+                Some(bounded(&format!("{action} {sid}")))
+            }
+        }
+        _ => str_key(&[
+            "toolSummary",
+            "Path",
+            "path",
+            "file_path",
+            "pattern",
+            "query",
+            "url",
+            "location",
+            "CommandLine",
+            "command",
+        ]),
     }
+}
+fn extract_antigravity_context(value: &Value) -> Option<crate::provider_usage::ContextUsage> {
+    let used_tokens = value["used_tokens"].as_u64().filter(|n| *n > 0)?;
+    Some(crate::provider_usage::ContextUsage {
+        used_tokens,
+        window_tokens: value["window_tokens"].as_u64().filter(|n| *n > 0),
+        measured_at: chrono::Utc::now().timestamp_millis(),
+        estimated: false,
+    })
+}
+fn extract_antigravity_todos(items: &Value) -> Option<Vec<TodoItem>> {
+    let arr = items.as_array()?;
+    let list: Vec<TodoItem> = arr
+        .iter()
+        .take(100)
+        .filter_map(|item| {
+            let text = item["text"]
+                .as_str()
+                .or_else(|| item["content"].as_str())?
+                .trim()
+                .to_owned();
+            if text.is_empty() {
+                return None;
+            }
+            let status = item["status"].as_str().unwrap_or("pending").to_owned();
+            Some(TodoItem { text, status })
+        })
+        .collect();
+    Some(list)
 }
 fn extract_claude_detail(input: &Value) -> Option<String> {
     if !input.is_object() {
@@ -233,7 +360,7 @@ impl Stream {
         match self.provider {
             Provider::Codex => self.codex(value),
             Provider::Claude => self.claude(value),
-            Provider::Antigravity => self.antigravity(value),
+            Provider::Antigravity | Provider::Bonsai => self.antigravity(value),
             Provider::Muse => self.muse.fold_line(&value.to_string()),
         }
     }
@@ -740,10 +867,11 @@ impl Stream {
                         .then(|| crate::provider_usage::antigravity_step(&result["usage"]))
                         .flatten()
                 });
-                if let Some(turn) = usage {
+                let context = extract_antigravity_context(&result["context"]);
+                if usage.is_some() || context.is_some() {
                     events.push(Event::Usage {
-                        context: None,
-                        turn: Some(turn),
+                        context,
+                        turn: usage,
                     });
                 }
                 events.push(end(status, Some(resp_text), reason));
@@ -753,6 +881,7 @@ impl Stream {
                 let step = &value["step_update"];
                 self.remember(&step["conversation_id"]);
                 let mut events = vec![];
+                let context = extract_antigravity_context(&step["context"]);
                 if let Some((index, usage)) = step["step_index"]
                     .as_u64()
                     .zip(crate::provider_usage::antigravity_step(&step["usage"]))
@@ -761,10 +890,38 @@ impl Stream {
                     {
                         self.agy_usage.insert(index, usage);
                         events.push(Event::Usage {
-                            context: None,
+                            context: context.clone(),
                             turn: self.agy_total(),
                         });
+                    } else if context.is_some() {
+                        events.push(Event::Usage {
+                            context,
+                            turn: None,
+                        });
                     }
+                } else if context.is_some() {
+                    events.push(Event::Usage {
+                        context,
+                        turn: None,
+                    });
+                }
+                if step["step_type"] == "thinking" {
+                    let delta = step["thinking_delta"]
+                        .as_str()
+                        .or_else(|| step["thought"].as_str())
+                        .or_else(|| step["text_delta"].as_str())
+                        .unwrap_or_default();
+                    if !delta.is_empty() {
+                        let think_idx = step["step_index"].as_u64().unwrap_or(0);
+                        events.push(Event::Activity {
+                            text: "Thinking…".into(),
+                        });
+                        events.push(Event::Reasoning {
+                            id: format!("agy-think-{think_idx}"),
+                            text: bounded(delta),
+                        });
+                    }
+                    return events;
                 }
                 if step["step_type"] == "agent_response" {
                     let delta = text(step, "text_delta");
@@ -780,16 +937,39 @@ impl Stream {
                     return events;
                 };
                 let id = format!("agy-{index}");
+                let info = &step["tool_info"];
+                let params = if info["parameters"].is_object() {
+                    Some(&info["parameters"])
+                } else if step["parameters"].is_object() {
+                    Some(&step["parameters"])
+                } else if step["args"].is_object() {
+                    Some(&step["args"])
+                } else {
+                    None
+                };
+                let detail = extract_antigravity_detail(&step["tool_name"], step, info);
                 if self.tools.insert(id.clone()) {
-                    let detail =
-                        extract_antigravity_detail(&step["tool_name"], step, &step["tool_info"]);
                     events.push(Event::ToolStart {
                         task_id: id.clone(),
                         name: text(step, "tool_name"),
-                        detail,
+                        detail: detail.clone(),
                     });
+                    if let Some(p) = params {
+                        events.push(Event::ToolInput {
+                            task_id: id.clone(),
+                            detail,
+                            input: bounded_input(p),
+                            parent: None,
+                        });
+                    }
                 }
-                let info = &step["tool_info"];
+                if let Some(todos) = extract_antigravity_todos(&step["todos"]).or_else(|| {
+                    (step["tool_name"] == "write_todos")
+                        .then(|| params.and_then(|p| extract_antigravity_todos(&p["items"])))
+                        .flatten()
+                }) {
+                    events.push(Event::Todos { items: todos });
+                }
                 let output = info["output"]
                     .as_str()
                     .map(|output| {
@@ -1121,5 +1301,42 @@ mod tests {
         assert!(content.ends_with("…[truncated]"));
         assert!(content.len() < 20_000);
         assert_eq!(value["file_path"], "a.txt");
+    }
+    #[test]
+    fn bonsai_streams_reasoning_tool_inputs_todos_and_context() {
+        let mut stream = Stream::new(Provider::Bonsai);
+        let thinking = stream.fold_line(r#"{"event":"step_update","step_update":{"step_index":1,"step_type":"thinking","thinking_delta":"Inspecting files first"}}"#);
+        assert!(thinking.contains(&Event::Reasoning {
+            id: "agy-think-1".into(),
+            text: "Inspecting files first".into()
+        }));
+
+        let edit_events = stream.fold_line(r#"{"event":"step_update","step_update":{"step_index":2,"step_type":"tool","tool_name":"edit_file","state":"RUNNING","tool_info":{"parameters":{"path":"src/main.rs","old_text":"old","new_text":"new"}}}}"#);
+        assert!(edit_events.contains(&Event::ToolStart {
+            task_id: "agy-2".into(),
+            name: "edit_file".into(),
+            detail: Some("src/main.rs".into())
+        }));
+        assert!(edit_events.contains(&Event::ToolInput {
+            task_id: "agy-2".into(),
+            detail: Some("src/main.rs".into()),
+            input: serde_json::json!({"path":"src/main.rs","old_text":"old","new_text":"new"}),
+            parent: None,
+        }));
+
+        let todo_events = stream.fold_line(r#"{"event":"step_update","step_update":{"step_index":3,"step_type":"tool","tool_name":"write_todos","state":"DONE","tool_info":{"parameters":{"items":[{"text":"Audit UI","status":"completed"}]},"output":"Updated 1 todo items"},"todos":[{"text":"Audit UI","status":"completed"}]}}"#);
+        assert!(todo_events.contains(&Event::Todos {
+            items: vec![TodoItem {
+                text: "Audit UI".into(),
+                status: "completed".into()
+            }]
+        }));
+
+        let usage_events = stream.fold_line(r#"{"event":"step_update","step_update":{"step_index":4,"step_type":"agent_response","text_delta":"","usage":{"input_tokens":500,"cache_read_tokens":250,"output_tokens":80,"thinking_tokens":30},"context":{"used_tokens":580,"window_tokens":65536}}}"#);
+        assert!(matches!(
+            &usage_events[0],
+            Event::Usage { context: Some(ctx), turn: Some(turn) }
+                if ctx.used_tokens == 580 && ctx.window_tokens == Some(65536) && turn.cached_input_tokens == Some(250) && turn.reasoning_output_tokens == Some(30)
+        ));
     }
 }

@@ -464,7 +464,7 @@ impl Probe {
                     self.output(text, "", None);
                 }
             }
-            Provider::Antigravity
+            Provider::Antigravity | Provider::Bonsai
                 if value["event"] == "step_update"
                     && value["step_update"]["step_type"] == "tool" =>
             {
@@ -511,7 +511,7 @@ impl Probe {
                     info["exit_code"].as_i64(),
                 );
             }
-            Provider::Antigravity
+            Provider::Antigravity | Provider::Bonsai
                 if value["event"] == "result"
                     && value["result"]["denied_actions"]
                         .as_array()

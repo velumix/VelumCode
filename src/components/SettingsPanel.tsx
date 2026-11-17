@@ -1091,6 +1091,7 @@ export default function SettingsPanel({
                           ["codex", "Codex"],
                           ["claude", "Claude"],
                           ["antigravity", "Antigravity"],
+                          ["bonsai", "Bonsai · Local GPU"],
                         ],
                         "Applies to new conversations. Existing conversations keep their provider.",
                       )}

@@ -88,7 +88,7 @@ export default function ProviderPicker({ value, onChange, failure, options, onOp
     <div className="provider-field">
       <label htmlFor="provider-choice">AI provider</label>
       <select id="provider-choice" value={value} onChange={(event) => onChange(event.target.value as Provider)} title="Choosing a different provider opens a new conversation">
-        {Object.entries(providerNames).map(([id, name]) => <option key={id} value={id}>{name}{id === "codex" ? " · ChatGPT" : ""}</option>)}
+        {Object.entries(providerNames).map(([id, name]) => <option key={id} value={id}>{name}{id === "codex" ? " · ChatGPT" : id === "bonsai" ? " · Local GPU" : ""}</option>)}
       </select>
     </div>
     <ModelControls provider={value} options={options} onChange={onOptionsChange} disabled={disabled} refreshKey={modelsKey} load={(provider, refresh) => invoke<ModelCatalog>("provider_models", { provider, refresh })} onSummary={(model,reasoning)=>setDisplay(previous=>previous.model===model&&previous.reasoning===reasoning?previous:{model,reasoning})} onRefresh={() => { warmupCache.delete(value); setWarmupKey(key => key + 1); void refresh(); }} refreshLabel="Refresh providers and models">

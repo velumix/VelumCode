@@ -13,6 +13,7 @@ pub enum Provider {
     Codex,
     Claude,
     Antigravity,
+    Bonsai,
 }
 
 impl Provider {
@@ -22,6 +23,7 @@ impl Provider {
             Self::Codex => "codex",
             Self::Claude => "claude",
             Self::Antigravity => "agy",
+            Self::Bonsai => "bonsai",
         }
     }
     pub fn label(self) -> &'static str {
@@ -30,6 +32,7 @@ impl Provider {
             Self::Codex => "Codex",
             Self::Claude => "Claude",
             Self::Antigravity => "Antigravity",
+            Self::Bonsai => "Bonsai",
         }
     }
     pub fn resolve(self) -> Option<PathBuf> {
@@ -48,6 +51,7 @@ impl Provider {
         if let Some(appdata) = std::env::var_os("APPDATA") {
             paths.push(PathBuf::from(appdata).join("npm"));
         }
+        paths.push(crate::pty::home_dir().join("Bonsai-2/bin"));
         paths.push(crate::pty::home_dir().join(".local/bin"));
         let extensions = if cfg!(windows) {
             vec![".exe", ".cmd", ".bat", ".com", ".ps1", ""]
@@ -71,10 +75,13 @@ impl Provider {
         if self == Self::Claude {
             return "Claude Code CLI was not found. Install `claude`, refresh providers, then choose Sign in.".into();
         }
+        if self == Self::Bonsai {
+            return "Bonsai CLI was not found. Check C:\\Users\\c0dec\\Bonsai-2\\bin\\bonsai.exe, then refresh.".into();
+        }
         format!("{} CLI was not found. Install `{}` and sign in using the Terminal view, then try again.", self.label(), self.command())
     }
     pub fn input(self, prompt: &str) -> String {
-        if self == Self::Antigravity {
+        if matches!(self, Self::Antigravity | Self::Bonsai) {
             format!(
                 "{}\n",
                 serde_json::json!({"event":"user", "message":{"content":prompt}})
@@ -100,6 +107,7 @@ pub fn provider_status() -> Vec<Info> {
         Provider::Codex,
         Provider::Claude,
         Provider::Antigravity,
+        Provider::Bonsai,
     ]
     .into_iter()
     .map(|id| Info {
@@ -112,6 +120,7 @@ pub fn provider_status() -> Vec<Info> {
             Provider::Codex => "https://developers.openai.com/codex/cli/",
             Provider::Claude => "https://code.claude.com/docs/en/overview",
             Provider::Antigravity => "https://antigravity.google/docs/getting-started?tab=cli",
+            Provider::Bonsai => "http://localhost:8080",
         },
     })
     .collect()
@@ -200,7 +209,10 @@ pub fn exec_command(
             }
             cmd.stdin(Stdio::piped());
         }
-        Provider::Antigravity => {
+        Provider::Antigravity | Provider::Bonsai => {
+            if provider == Provider::Bonsai {
+                cmd.env("PYTHONUTF8", "1").env("PYTHONIOENCODING", "utf-8");
+            }
             cmd.args([
                 "--input-format",
                 "stream-json",
@@ -220,6 +232,35 @@ pub fn exec_command(
     cmd.current_dir(workspace)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Ensure user toolchain directories (.rokit, Gojo, Bonsai-2) are available on PATH
+    // even if Velum Code launched before User PATH was refreshed.
+    {
+        let home = crate::pty::home_dir();
+        let extra_dirs = [
+            home.join("Bonsai-2").join("bin"),
+            home.join(".local").join("bin"),
+            home.join(".rokit").join("bin"),
+            home.join("OneDrive")
+                .join("Desktop")
+                .join("Studio")
+                .join("Gojo"),
+        ];
+        let mut current: Vec<PathBuf> = std::env::var_os("PATH")
+            .map(|p| std::env::split_paths(&p).collect())
+            .unwrap_or_default();
+        let mut prepend = Vec::new();
+        for dir in extra_dirs {
+            if dir.is_dir() && !current.iter().any(|existing| existing == &dir) {
+                prepend.push(dir);
+            }
+        }
+        if !prepend.is_empty() {
+            prepend.append(&mut current);
+            if let Ok(joined) = std::env::join_paths(prepend) {
+                cmd.env("PATH", joined);
+            }
+        }
+    }
     // The Windows sandbox account can differ from the desktop owner. Trust
     // just this selected repository in the child environment, never '*', ACLs
     // or the user's global Git config. Host git_status also applies it as -c.

@@ -29,6 +29,8 @@ import { attachment, chatSnapshot, type AccessCheck, type Diagnostics } from '..
 import SessionDashboard from './SessionDashboard';
 import { parseStatus } from './gitStatus';
 import SkillPicker from './SkillPicker';
+import ToolPicker from './ToolPicker';
+import SwarmPicker from './SwarmPicker';
 import type { InstalledSkill } from '../skills';
 const ContextPanel = lazy(() => import('./ContextPanel'));
 
@@ -152,6 +154,24 @@ function asString(v: unknown): string | undefined {
   return typeof v === "string" ? v : undefined;
 }
 
+const MUTATING_FILE_TOOLS = new Set([
+  "Edit",
+  "Write",
+  "edit_file",
+  "write_file",
+  "delete_file",
+  "NotebookEdit",
+  "apply_patch",
+]);
+const STRUCTURED_FILE_TOOLS = new Set([
+  ...MUTATING_FILE_TOOLS,
+  "Read",
+  "read_file",
+  "inspect_file",
+  "git_diff",
+  "workspace_read_file",
+]);
+
 function turnTouchedFiles(blocks: Block[], assistantId: number): string[] {
   const idx = blocks.findIndex((b) => b.id === assistantId);
   if (idx === -1) return [];
@@ -159,43 +179,73 @@ function turnTouchedFiles(blocks: Block[], assistantId: number): string[] {
   while (startIdx >= 0 && blocks[startIdx]?.kind !== "user") {
     startIdx--;
   }
-  const files = new Set<string>();
+  const structuredMutated = new Set<string>();
+  const structuredAny = new Set<string>();
   for (let i = Math.max(0, startIdx); i < idx; i++) {
     const b = blocks[i];
     if (b && b.kind === "tool") {
-      // Structured inputs name the file exactly; text matching is the fallback.
-      const path = b.input?.file_path ?? b.input?.notebook_path;
-      if (typeof path === "string" && path) {
-        files.add(path);
-        continue;
+      const p = b.input?.file_path ?? b.input?.notebook_path ?? b.input?.path ?? b.input?.Path;
+      if (typeof p === "string" && p.trim() && STRUCTURED_FILE_TOOLS.has(b.name)) {
+        const clean = p.trim();
+        structuredAny.add(clean);
+        if (MUTATING_FILE_TOOLS.has(b.name)) {
+          structuredMutated.add(clean);
+        }
       }
-      const toolText = `${b.name} ${b.output} ${b.result || ""}`;
-      const matches = toolText.match(/[a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]{1,8}/g);
+    }
+  }
+  if (structuredMutated.size > 0) return Array.from(structuredMutated).slice(0, 4);
+  if (structuredAny.size > 0) return Array.from(structuredAny).slice(0, 4);
+
+  const fallback = new Set<string>();
+  for (let i = Math.max(0, startIdx); i < idx; i++) {
+    const b = blocks[i];
+    if (b && b.kind === "tool") {
+      const toolText = `${b.detail || ""} ${b.output}`;
+      const matches = toolText.match(/[a-zA-Z0-9_\-./\\]+\.[a-zA-Z]{1,6}/g);
       if (matches) {
         for (const m of matches) {
-          if (!m.includes("http") && !m.endsWith(".jsonl") && (m.includes("/") || m.includes("\\") || m.includes("."))) {
-            files.add(m.trim());
+          if (!m.includes("http") && !m.endsWith(".jsonl")) {
+            fallback.add(m.trim());
           }
         }
       }
     }
   }
-  return Array.from(files).slice(0, 4);
+  return Array.from(fallback).slice(0, 4);
 }
 
-function parseAttachedImage(text: string): { imageTag?: string; imagePath?: string; relativePath?: string; cleanText: string } {
-  const match = text.match(/^\[Attached image:\s*([^\s)]+)(?:\s*\((file:\/\/\/[^)]+)\))?\]\s*/);
+function parseAttachedImage(text: string): { imageTag?: string; imagePath?: string; relativePath?: string; swarmTargets?: string; cleanText: string } {
+  let remaining = text;
+  let swarmTargets: string | undefined;
+  const preSwarm = remaining.match(/^<velum-swarm-roster\s+targets="([^"]*)">[\s\S]*?<\/velum-swarm-roster>\s*/);
+  if (preSwarm) {
+    swarmTargets = preSwarm[1].trim() || "auto";
+    remaining = remaining.slice(preSwarm[0].length);
+  }
+  const match = remaining.match(/^\[Attached image:\s*([^\s)]+)(?:\s*\((file:\/\/\/[^)]+)\))?\]\s*/);
   if (!match) {
-    return { cleanText: text };
+    const postSwarm = remaining.match(/^<velum-swarm-roster\s+targets="([^"]*)">[\s\S]*?<\/velum-swarm-roster>\s*/);
+    if (!swarmTargets && postSwarm) {
+      swarmTargets = postSwarm[1].trim() || "auto";
+      remaining = remaining.slice(postSwarm[0].length);
+    }
+    return { swarmTargets, cleanText: remaining.trim() || text };
   }
   const relativePath = match[1];
   const fileUrl = match[2];
-  const cleanText = text.slice(match[0].length).trim();
+  let cleanText = remaining.slice(match[0].length);
+  const postSwarm = cleanText.match(/^<velum-swarm-roster\s+targets="([^"]*)">[\s\S]*?<\/velum-swarm-roster>\s*/);
+  if (!swarmTargets && postSwarm) {
+    swarmTargets = postSwarm[1].trim() || "auto";
+    cleanText = cleanText.slice(postSwarm[0].length);
+  }
   return {
     imageTag: match[0],
     relativePath,
     imagePath: fileUrl || relativePath,
-    cleanText: cleanText || "Please inspect and analyze this attached image.",
+    swarmTargets,
+    cleanText: cleanText.trim() || "Please inspect and analyze this attached image.",
   };
 }
 
@@ -428,14 +478,28 @@ function CopyButton({
   );
 }
 
-/** A unified diff for a structured edit (Claude Code's Edit tool). */
+/** A unified diff for structured edit and write tools (Claude Code & Bonsai). */
 function editDiff(name: string, input: Record<string, unknown>): string | null {
-  if (name !== "Edit") return null;
-  const before = input.old_string, after = input.new_string;
-  if (typeof before !== "string" || typeof after !== "string") return null;
-  const lines = (text: string, mark: string) => (text === "" ? [] : text.split("\n").map((line) => mark + line));
-  const removed = lines(before, "-"), added = lines(after, "+");
-  return [`@@ -1,${removed.length} +1,${added.length} @@`, ...removed, ...added].join("\n");
+  if (name === "Edit" || name === "edit_file") {
+    const before = name === "Edit" ? input.old_string : (input.old_text ?? input.Target);
+    const after = name === "Edit" ? input.new_string : (input.new_text ?? input.Replacement);
+    if (typeof before !== "string" || typeof after !== "string") return null;
+    const lines = (text: string, mark: string) => (text === "" ? [] : text.split("\n").map((line) => mark + line));
+    const removed = lines(before, "-"), added = lines(after, "+");
+    return [`@@ -1,${removed.length} +1,${added.length} @@`, ...removed, ...added].join("\n");
+  }
+  if (name === "Write" || name === "write_file") {
+    const content = input.content;
+    if (typeof content !== "string" || !content) return null;
+    const allLines = content.split("\n");
+    const cap = 120;
+    const shown = allLines.slice(0, cap).map((line) => `+${line}`);
+    if (allLines.length > cap) {
+      shown.push(`@@ … +${allLines.length - cap} more lines @@`);
+    }
+    return [`@@ -0,0 +1,${Math.min(allLines.length, cap)} @@`, ...shown].join("\n");
+  }
+  return null;
 }
 
 function ReasoningBlock({ block }: { block: Extract<Block, { kind: "reasoning" }> }) {
@@ -472,6 +536,8 @@ function ToolBlock({ block }: { block: Extract<Block, { kind: "tool" }> }) {
   const { head, rest } = preview(body || (block.status === "running" ? "…" : ""));
   const detail = block.detail || extractToolSnippet(block.name, block.output, block.result);
   const diff = useMemo(() => (block.input ? editDiff(block.name, block.input) : null), [block.name, block.input]);
+  const showDiff = Boolean(diff && (open || settings.toolOutput !== "collapsed"));
+  const showBody = Boolean(body && (open || (!diff && settings.toolOutput !== "collapsed") || tone === "bad"));
   return (
     <div className={`tool-card ${tone}`}>
       <button type="button" className="tool-head" onClick={() => setOverride(!open)} aria-expanded={open}>
@@ -497,8 +563,8 @@ function ToolBlock({ block }: { block: Extract<Block, { kind: "tool" }> }) {
       </button>
       {block.policy && !isPlainAllow(block.policy) && <div className="tool-policy">policy: {block.policy}</div>}
       {block.reason && <div className="tool-reason">{block.reason}</div>}
-      {open && diff && <div className="tool-diff"><DiffLines text={diff} /></div>}
-      {body && (open || settings.toolOutput !== "collapsed") ? (
+      {showDiff && diff && <div className="tool-diff"><DiffLines text={diff} /></div>}
+      {showBody ? (
         <div className="tool-output-wrap">
           {open ? (
             <pre className="tool-output full">{capped(body)}</pre>
@@ -580,6 +646,20 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
   const [pendingAttachment, setPendingAttachment] = useState<PendingAttachment | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
+  const [swarmEnabled, setSwarmEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("velum:swarm-enabled") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [swarmTargets, setSwarmTargets] = useState<string[]>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem("velum:swarm-targets") || "null");
+      if (Array.isArray(raw) && raw.every((x) => typeof x === "string")) return raw;
+    } catch {}
+    return ["bonsai-fast", "codex", "claude"];
+  });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -1330,6 +1410,13 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
       }
 
       if (!prompt) return false;
+      if ((swarmEnabled || /^\/(swarm|delegate)\b/i.test(prompt)) && !prompt.includes("<velum-swarm-roster")) {
+        const roster = swarmTargets.length
+          ? swarmTargets.join(", ")
+          : "bonsai-fast, bonsai, codex, claude, antigravity";
+        const swarmHeader = `<velum-swarm-roster targets="${roster}">Multi-provider swarm delegation is active. Preferred delegation targets: ${roster}. Use list_swarm_providers, run_swarm (for 2+ parallel subtasks), delegate_task (for single specialist handoffs), swarm_board, and write_todos (or Velum MCP equivalents swarm_list_providers / swarm_run / swarm_delegate_task / swarm_board) to coordinate across models and synthesize their results.</velum-swarm-roster>`;
+        prompt = `${swarmHeader}\n\n${prompt}`;
+      }
       if (runningRef.current || queueRef.current.items.length || queueRef.current.paused) {
         if (!preserveDraft) { inputRef.current = ''; setInput(''); setHistIdx(null); }
         return invoke('agent_send', { id: nativeId, prompt, yolo }).then(()=>nativeIdRef.current === nativeId).catch((error: unknown) => {
@@ -1346,7 +1433,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
       assistantSeenRef.current = false;
       turnPromptRef.current = prompt;
       if (!titleAssignedRef.current) {
-        onTitle(sessionId, prompt.replace(/\s+/g, " ").slice(0, 48));
+        onTitle(sessionId, parseAttachedImage(prompt).cleanText.replace(/\s+/g, " ").slice(0, 48));
         titleAssignedRef.current = true;
       }
       if (!preserveDraft) { setInput(""); inputRef.current = ''; }
@@ -1383,7 +1470,7 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
         return false;
       });
     },
-    [ready, sessionId, setStatus, yolo, onTitle, terminalOwnsConversation, pendingAttachment, effective],
+    [ready, sessionId, setStatus, yolo, onTitle, terminalOwnsConversation, pendingAttachment, effective, swarmEnabled, swarmTargets],
   );
 
   const send = useCallback(() => sendText(inputRef.current), [sendText]);
@@ -1419,6 +1506,8 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
 
   const openTodos = todos.filter((t) => t.status !== "completed");
   const doneTodos = todos.filter((t) => t.status === "completed");
+  const toolBlocks = useMemo(() => blocks.filter((b): b is Extract<Block, { kind: "tool" }> => b.kind === "tool"), [blocks]);
+  const runningToolCount = useMemo(() => toolBlocks.filter((b) => statusTone(b.status) === "busy").length, [toolBlocks]);
   const lastAssistant = lastMatch(blocks,b=>b.kind==='assistant');
   const recoveryNotice = latestRecovery(blocks);
   const workspaceEditorOpen = workspaceOpen || !settings.compactControls || draft !== effective || !!workspaceError;
@@ -1517,6 +1606,26 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                   </button>
                 </div>
 
+                <div className="cv-popover-section-label">Switch Provider</div>
+                <div className="cv-popover-peers">
+                  {(Object.entries(providerNames) as [Provider, string][]).map(([id, name]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className={`cv-peer-chip${provider === id && !bot ? " active" : ""}`}
+                      onClick={() => {
+                        setBotPopoverOpen(false);
+                        if (id !== provider || bot) {
+                          window.dispatchEvent(new CustomEvent("velum:switch-provider", { detail: { provider: id } }));
+                        }
+                      }}
+                      title={`Open a ${name}${id === "bonsai" ? " · Local GPU" : ""} conversation in this workspace`}
+                    >
+                      <span>{name}{id === "bonsai" ? " · Local" : ""}{provider === id && !bot ? " ✓" : ""}</span>
+                    </button>
+                  ))}
+                </div>
+
                 <div className="cv-popover-section-label">Quick Peer Handoff</div>
                 <div className="cv-popover-peers">
                   {peers.map((peer) => (
@@ -1547,6 +1656,25 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
         </div>
 
         <div className="chat-view-header-right">
+          {toolBlocks.length > 0 && (
+            <button
+              type="button"
+              className={`cv-tools-chip${runningToolCount > 0 ? " busy" : ""}`}
+              title="Inspect tool calls, parameters, and execution output in Mission Dashboard"
+              onClick={() => {
+                setChatMode("split");
+                setDashboardTabReq(r => ({ tab: "activity", seq: (r?.seq ?? 0) + 1 }));
+                try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
+              }}
+            >
+              <Icon name="terminal" size={12} />
+              <span>
+                {runningToolCount > 0
+                  ? `${runningToolCount}/${toolBlocks.length} tools`
+                  : `${toolBlocks.length} ${toolBlocks.length === 1 ? "tool" : "tools"}`}
+              </span>
+            </button>
+          )}
           {gitChangedCount > 0 && (
             <button
               type="button"
@@ -1699,6 +1827,12 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
                               <span className="msg-attachment-name">{imgName}</span>
                             </div>
                           </div>
+                        </div>
+                      )}
+                      {parsed.swarmTargets && (
+                        <div className="msg-swarm-badge" title={`Delegated swarm roster: ${parsed.swarmTargets}`}>
+                          <Icon name="layers" size={12} />
+                          <span>Swarm · {parsed.swarmTargets}</span>
                         </div>
                       )}
                       <pre>{parsed.cleanText}</pre>
@@ -2053,6 +2187,43 @@ export default function ChatView({ provider, options, initialWorkspace, sessionI
           {yolo ? <YoloIcon /> : <Icon name="shield" size={16} />}<span>{yolo ? "YOLO on" : "Standard"}</span>
         </button>
         <SkillPicker skills={skills} skillIds={skillIds} onChange={onSkillsChange} onManage={onManageSkills} disabled={!ready} />
+        <ToolPicker
+          provider={provider}
+          totalTools={toolBlocks.length}
+          runningTools={runningToolCount}
+          disabled={!ready}
+          onOpenActivity={() => {
+            setChatMode("split");
+            setDashboardTabReq((r) => ({ tab: "activity", seq: (r?.seq ?? 0) + 1 }));
+            try { localStorage.setItem("velum:chat-mode", "split"); } catch {}
+          }}
+        />
+        <SwarmPicker
+          provider={provider}
+          enabled={swarmEnabled}
+          targets={swarmTargets}
+          disabled={!ready || running}
+          onToggleEnabled={(next) => {
+            setSwarmEnabled(next);
+            try { localStorage.setItem("velum:swarm-enabled", next ? "1" : "0"); } catch {}
+          }}
+          onChangeTargets={(next) => {
+            setSwarmTargets(next);
+            try { localStorage.setItem("velum:swarm-targets", JSON.stringify(next)); } catch {}
+          }}
+          onInsertAction={(prefix, autoEnable) => {
+            if (autoEnable) {
+              setSwarmEnabled(true);
+              try { localStorage.setItem("velum:swarm-enabled", "1"); } catch {}
+            }
+            const cur = inputRef.current.trim();
+            const next = cur ? `${prefix}${cur}` : prefix;
+            inputRef.current = next;
+            setInput(next);
+            setHistIdx(null);
+            composerRef.current?.focus();
+          }}
+        />
         <span className="composer-hint">
           {input.length > 200 ? (
             <span className={`composer-char-count${input.length > 50000 ? " near-limit" : ""}`}>

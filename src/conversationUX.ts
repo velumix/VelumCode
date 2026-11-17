@@ -79,20 +79,43 @@ export const FRIENDLY_TOOLS: Record<string, string> = {
   git_status: "Git Status",
   git_branches: "Git Branches",
   git_diff: "Git Diff",
+  git_log: "Git Log",
   vault_search: "Memory",
   turn_diagnostics: "Diagnostics",
   browser_open: "Browser",
   browser_snapshot: "Snapshot",
   browser_action: "Action",
   browser_screenshot: "Screenshot",
+  native_windows: "Windows",
+  native_screenshot: "Desktop Shot",
+  native_input: "Desktop Input",
   apply_patch: "Patch",
   execute_command: "Command",
+  run_command: "Shell",
   bash: "Shell",
   sh: "Shell",
   cmd: "Command",
   list_dir: "List",
   list_directory: "List",
+  grep_files: "Search",
+  glob_files: "Find files",
+  get_current_datetime: "Clock",
+  system_health: "System Health",
+  get_weather: "Weather",
+  github_api: "GitHub API",
+  memory_save: "Save Memory",
+  memory_search: "Search Memory",
+  run_python: "Python",
+  workspace_list_search: "Find files",
+  workspace_read_file: "Read",
+  list_swarm_providers: "Swarm Roster",
+  delegate_task: "Delegate",
+  run_swarm: "Swarm",
+  swarm_board: "Swarm Board",
   // Claude Code tool names
+  Read: "Read",
+  Write: "Write",
+  Edit: "Edit",
   Bash: "Shell",
   PowerShell: "Shell",
   Glob: "Find files",
@@ -152,17 +175,39 @@ export function extractToolSnippet(name: string, output?: string, result?: strin
 
 export function toolCategory(name: string): "shell" | "file" | "search" | "git" | "mcp" {
   const n = (name || "").toLowerCase();
-  if (n.includes("powershell") || n.includes("bash") || n.includes("shell") || n.includes("cmd") || n.includes("run_command") || n.includes("execute_command")) {
+  if (
+    n.includes("powershell") ||
+    n.includes("bash") ||
+    n.includes("shell") ||
+    n.includes("cmd") ||
+    n.includes("run_command") ||
+    n.includes("execute_command") ||
+    n === "run_python"
+  ) {
     return "shell";
   }
-  if (n.includes("git_") || n.includes("diff") || n.startsWith("git ")) {
+  if (n.includes("git_") || n.includes("diff") || n.startsWith("git ") || n === "github_api") {
     return "git";
   }
-  if (n.includes("read") || n.includes("write") || n.includes("edit") || n.includes("file") || n.includes("inspect")) {
-    return "file";
-  }
-  if (n.includes("search") || n.includes("vault") || n.includes("fetch")) {
+  if (
+    n.includes("grep") ||
+    n.includes("glob") ||
+    n.includes("search") ||
+    n.includes("vault") ||
+    n.includes("fetch") ||
+    n === "workspace_list_search"
+  ) {
     return "search";
+  }
+  if (
+    n.includes("read") ||
+    n.includes("write") ||
+    n.includes("edit") ||
+    n.includes("file") ||
+    n.includes("inspect") ||
+    n.includes("list_dir")
+  ) {
+    return "file";
   }
   return "mcp";
 }
@@ -254,6 +299,20 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description: "Inspect active Kanban tasks and plan the next priority card",
     prompt: "Inspect the Kanban tasks for this workspace. Check for in-progress or high-priority cards, verify prerequisites, and outline what we should accomplish next.",
     icon: "board",
+  },
+  {
+    command: "/swarm",
+    label: "Swarm",
+    description: "Delegate parallel subtasks across multiple AI providers or Velum Bots",
+    prompt: "Run a multi-provider /swarm for this request: first call `list_swarm_providers` to inspect installed providers (`bonsai-fast`, `bonsai`, `claude`, `codex`, `antigravity`, `muse`) and Velum Bots, publish a plan via `write_todos`, split the work into 2-4 focused slices executed in parallel via `run_swarm`, review the shared `swarm_board`, and synthesize a verified final answer.",
+    icon: "bot",
+  },
+  {
+    command: "/delegate",
+    label: "Delegate",
+    description: "Hand off a subtask to another model/provider (e.g. Claude, Codex, Bonsai Fast)",
+    prompt: "Check `list_swarm_providers`, pick the best-suited worker provider or Velum Bot for the subtask below, delegate it via `delegate_task`, verify its output, and integrate the result: ",
+    icon: "layers",
   },
   {
     command: "/clear",

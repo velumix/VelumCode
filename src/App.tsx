@@ -651,6 +651,12 @@ export default function App() {
     { id:"cmd-memory", title:"Open project memory vault", icon: "memory", run:()=>{ if(activeTab?.workspace)setMemory({workspace:activeTab.workspace}); } },
     { id: "cmd-remote", title: "Connect your phone with Tailscale or USB", icon: "phone", run: () => setRemoteOpen(true) },
     { id: "cmd-new", title: "New agent tab", hint: "Ctrl+T", icon: "plus", run: newTab },
+    ...(Object.entries(providerNames) as [Provider, string][]).map(([id, name]) => ({
+      id: `cmd-new-${id}`,
+      title: `New ${name}${id === "codex" ? " · ChatGPT" : id === "bonsai" ? " · Local GPU" : ""} tab`,
+      icon: "plus" as const,
+      run: () => openProvider(id, false),
+    })),
     { id: "cmd-focus", title: "Focus message input", hint: "Ctrl+L", icon: "chat", run: focusComposer },
     {
       id: "cmd-agent",
@@ -741,18 +747,27 @@ export default function App() {
       if (ws) setBoardWorkspace(ws);
     };
     const onOpenManage = () => setBotPanel('manage');
+    const onSwitchProvider = (e: Event) => {
+      const detail = (e as CustomEvent<{ provider?: Provider }>).detail;
+      if (detail?.provider) openProvider(detail.provider, false);
+    };
+    const onOpenPlugins = () => setPluginPanel({});
 
     window.addEventListener('velum:handoff-bot', onHandoff);
     window.addEventListener('velum:open-bot-memory', onOpenMemory);
     window.addEventListener('velum:open-kanban', onOpenKanban);
     window.addEventListener('velum:open-bot-manage', onOpenManage);
+    window.addEventListener('velum:switch-provider', onSwitchProvider);
+    window.addEventListener('velum:open-plugins', onOpenPlugins);
     return () => {
       window.removeEventListener('velum:handoff-bot', onHandoff);
       window.removeEventListener('velum:open-bot-memory', onOpenMemory);
       window.removeEventListener('velum:open-kanban', onOpenKanban);
       window.removeEventListener('velum:open-bot-manage', onOpenManage);
+      window.removeEventListener('velum:switch-provider', onSwitchProvider);
+      window.removeEventListener('velum:open-plugins', onOpenPlugins);
     };
-  }, [bots, handoffToBot]);
+  }, [bots, handoffToBot, openProvider]);
 
   return (
     <div className="app">

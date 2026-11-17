@@ -198,7 +198,7 @@ impl AgentState {
             .ok_or("Open the saved chat before continuing in terminal.")?;
         if !matches!(
             session.provider,
-            Provider::Muse | Provider::Claude | Provider::Antigravity
+            Provider::Muse | Provider::Claude | Provider::Antigravity | Provider::Bonsai
         ) {
             return Err("Terminal continuation is unavailable for this provider.".into());
         }
@@ -1319,6 +1319,7 @@ fn spawn_reader(
                     Provider::Codex => "Codex completion or retained session delta; launch baseline excludes earlier turns",
                     Provider::Claude => "Claude Code result usage for this turn",
                     Provider::Antigravity => "Antigravity per-step provider accounting for this turn",
+                    Provider::Bonsai => "Bonsai local llama-server per-step accounting for this turn",
                 }
             }.into();
         }

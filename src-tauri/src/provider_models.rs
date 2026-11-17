@@ -39,7 +39,9 @@ impl RunOptions {
                     && !["low", "medium", "high", "max"].contains(&self.reasoning.as_str()))
                 || (provider == Provider::Claude
                     && !["low", "medium", "high", "xhigh", "max"]
-                        .contains(&self.reasoning.as_str())))
+                        .contains(&self.reasoning.as_str()))
+                || (provider == Provider::Bonsai
+                    && !["none", "low", "medium", "xhigh"].contains(&self.reasoning.as_str())))
         {
             return Err("This provider does not support that reasoning level.".into());
         }
@@ -67,7 +69,7 @@ impl RunOptions {
                     // TOML literal quotes survive Windows PowerShell and .cmd shims.
                     format!("model_reasoning_effort='{}'", self.reasoning),
                 ],
-                Provider::Antigravity | Provider::Claude => {
+                Provider::Antigravity | Provider::Claude | Provider::Bonsai => {
                     ["--effort".into(), self.reasoning.clone()]
                 }
             });
@@ -108,6 +110,8 @@ fn command_path(path: &std::path::Path) -> Command {
         Command::new(path)
     };
     cmd.current_dir(crate::pty::home_dir())
+        .env("PYTHONUTF8", "1")
+        .env("PYTHONIOENCODING", "utf-8")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -483,7 +487,107 @@ fn discover_claude() -> Result<Catalog, String> {
         models,
     })
 }
+fn parse_bonsai_models(value: &Value) -> Vec<Model> {
+    value["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(50)
+        .filter_map(|entry| {
+            let id = field(entry, "id");
+            if id.is_empty()
+                || (RunOptions {
+                    model: id.clone(),
+                    reasoning: String::new(),
+                })
+                .validate(Provider::Bonsai)
+                .is_err()
+            {
+                return None;
+            }
+            let efforts: Vec<String> = entry["efforts"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter(|v| ["none", "low", "medium", "xhigh"].contains(v))
+                .map(str::to_owned)
+                .collect();
+            let default_effort = field(entry, "default_effort");
+            let default_effort = if !default_effort.is_empty() && efforts.contains(&default_effort)
+            {
+                default_effort
+            } else if efforts.iter().any(|e| e == "medium") {
+                "medium".into()
+            } else {
+                efforts.first().cloned().unwrap_or_default()
+            };
+            let label = field(entry, "label");
+            Some(Model {
+                label: if label.is_empty() { id.clone() } else { label },
+                is_default: entry["is_default"].as_bool().unwrap_or(false),
+                id,
+                description: field(entry, "description"),
+                efforts,
+                default_effort,
+            })
+        })
+        .collect()
+}
+fn discover_bonsai() -> Result<Catalog, String> {
+    let mut cmd = command(Provider::Bonsai)?;
+    cmd.args(["models", "--json"]).stdin(Stdio::null());
+    let mut process = Process(
+        crate::child_process::Child::spawn(&mut cmd)
+            .map_err(|_| "Could not launch Bonsai CLI for model discovery.")?,
+    );
+    let mut out = process
+        .0
+        .stdout
+        .take()
+        .ok_or("Bonsai model output unavailable.")?
+        .take(256 * 1024);
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut data = String::new();
+        let _ = out.read_to_string(&mut data);
+        let _ = tx.send(data);
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let output = rx
+        .recv_timeout(Duration::from_secs(10))
+        .map_err(|_| "Bonsai took too long to list models. Refresh to try again.")?;
+    let status = loop {
+        if let Some(status) = process
+            .0
+            .try_wait()
+            .map_err(|_| "Bonsai model discovery stopped.")?
+        {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            return Err("Bonsai took too long to list models. Refresh to try again.".into());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    if !status.success() {
+        return Err("Bonsai model discovery exited with an error.".into());
+    }
+    let parsed: Value =
+        serde_json::from_str(&output).map_err(|_| "Bonsai returned invalid model catalog JSON.")?;
+    let models = parse_bonsai_models(&parsed);
+    Ok(Catalog {
+        defaults: resolve_defaults(&models, RunOptions::default()),
+        notice: models
+            .is_empty()
+            .then(|| "Bonsai returned no selectable models. Refresh or enter a model ID.".into()),
+        models,
+    })
+}
 fn discover(provider: Provider) -> Result<Catalog, String> {
+    if provider == Provider::Bonsai {
+        return discover_bonsai();
+    }
     if provider == Provider::Claude {
         return discover_claude();
     }

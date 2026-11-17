@@ -38,7 +38,7 @@ export async function boot(page: Page, delay = 0, configure = true, waitForStart
       const api = (w.qa = {
         calls: [] as any[],
         measurement: null as any,
-        toolPermissions:{enabled:true,file_delete:true,vault_search:true,browser:true,native_screenshot:false,native_control:false},
+        toolPermissions:{enabled:true,file_delete:true,vault_search:true,browser:true,native_screenshot:false,native_control:false,swarm:true},
         sessions: new Map(),
         agentQueues: new Map<string, any>(),
         interactions: new Map<string, any>(),
@@ -502,14 +502,16 @@ export async function boot(page: Page, delay = 0, configure = true, waitForStart
             return;
           }
           if (cmd === "provider_status")
-            return ["muse", "codex", "claude", "antigravity"].map((id) => ({
+            return ["muse", "codex", "claude", "antigravity", "bonsai"].map((id) => ({
               id,
               installed:
                 id === "antigravity"
                   ? api.antigravityInstalled
                   : id === "claude"
                     ? api.claudeInstalled
-                    : true,
+                    : id === "bonsai"
+                      ? !!api.bonsaiInstalled
+                      : true,
               setup_url:
                 id === "claude"
                   ? "https://code.claude.com/docs/en/overview"

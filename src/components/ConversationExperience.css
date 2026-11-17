@@ -388,6 +388,13 @@ button.cv-bot-pill-btn.active {
   transform: translateY(-1px);
 }
 
+.cv-peer-chip.active {
+  background: var(--accent-dim, #25364d);
+  border-color: var(--accent, #84baff);
+  color: var(--accent, #84baff);
+  font-weight: 600;
+}
+
 .cv-bot-pill {
   display: inline-flex;
   align-items: center;
@@ -462,6 +469,33 @@ button.cv-bot-pill-btn.active {
   background: var(--hover, #353638);
   border-color: var(--accent, #84baff);
   color: var(--text);
+}
+
+.cv-tools-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid var(--border, #36383b);
+  border-radius: 5px;
+  background: var(--raised, #24252a);
+  color: var(--muted, #adb1b9);
+  font-size: calc(10.5px * var(--ui-scale, 1));
+  font-weight: 550;
+  cursor: pointer;
+  transition: all 140ms ease;
+}
+
+.cv-tools-chip:hover {
+  background: var(--hover, #353638);
+  border-color: var(--accent-border, rgba(132, 186, 255, 0.3));
+  color: var(--text, #e8eaed);
+}
+
+.cv-tools-chip.busy {
+  border-color: var(--accent-border, rgba(132, 186, 255, 0.35));
+  background: var(--accent-dim, #25364d);
+  color: var(--accent, #84baff);
 }
 
 .cv-mode-toggle {
